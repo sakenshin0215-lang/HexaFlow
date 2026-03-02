@@ -1,0 +1,8 @@
+{
+  "DIV[H1[\"原生支持 130\"],DIV[A[SPAN[\"开始交易\"]],DIV[BUTTON[SPAN[\"获取 OKX W\"]]]]]": {
+    "selector": "xpath=//div[@role='dialog']//button[contains(@class,'dex-plain-button')]"
+  },
+  "DIV[DIV[DIV[DIV[DIV[A[DIV[\"ONDO 交易赛\"],DIV[\"770.5 GO\"],DIV[DIV[\"08\"],DIV[\"日\"],DIV[\"04\"],DIV[\"时\"],DIV[\"21\"],DIV[\"分\"],DIV[\"22\"],DIV[\"秒\"]]]],DIV[A[DIV[DIV[DIV[\"DEX 邀请计划\"],DIV[\"邀请好友交易，赚\"],BUTTON[SPAN[\"马上体验\"]]]]]],DIV[A[DIV[\"ONDO 交易赛\"],DIV[\"770.5 GO\"],DIV[DIV[\"08\"],DIV[\"日\"],DIV[\"04\"],DIV[\"时\"],DIV[\"21\"],DIV[\"分\"],DIV[\"22\"],DIV[\"秒\"]]]],DIV[A[DIV[DIV[DIV[\"DEX 邀请计划\"],DIV[\"邀请好友交易，赚\"],BUTTON[SPAN[\"马上体验\"]]]]]]]]]]": {
+    "selector": "text=\"马上体验\""
+  }
+}

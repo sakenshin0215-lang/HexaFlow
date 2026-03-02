@@ -1,0 +1,61 @@
+{
+  "task_name": "Task_20260302_164647",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "The current page is about:blank with no interactive elements. To achieve the user's goal, the first step is to navigate to the OKX Web3 homepage at https://www.okx.com/web3.",
+      "pre_check": {
+        "expected_url_contains": "about:blank",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null
+      }
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "The user wants to click the left-top '行情' link after loading the OKX Web3 homepage. In the current screen, the navigation link with text '行情' is represented by the element hexa-2. Clicking it will navigate to the market page, after which the next steps (clicking '热议' and then '连接钱包') can be performed.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null
+      }
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "The user wants to click the '热议' button after having clicked '行情'. The current screen shows a div with text '热议' identified as hexa-18. So the next step is to click that element.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"热议\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"热议\"",
+        "input_value": null
+      }
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "The user wants to click the '连接钱包' button after having clicked '行情' and '热议'. The current screen shows a div with text '连接钱包' and ID hexa-13, which matches the target. So the next step is to click this element.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null
+      }
+    }
+  ]
+}
