@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -19,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger("HexaEngine")
 
 class HexaEngine:
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, state_path: str = "memory/workspace/auth_state.json"):
         """
         初始化执行引擎
         :param headless: 是否无头模式运行。调试时建议设为 False 观看浏览器动作
@@ -27,6 +28,7 @@ class HexaEngine:
         self.headless = headless
         self.playwright = None
         self.browser = None
+        self.state_path = state_path
         
     async def start(self):
         """启动浏览器环境"""
@@ -53,8 +55,14 @@ class HexaEngine:
         healer = PopupHealer()
 
         if not context:
-            context = await self.browser.new_context(viewport={'width': 1280, 'height': 800})
-            
+            context_options = {'viewport': {'width': 1280, 'height': 800}}
+            # 如果存在历史状态文件，则作为“记忆”注入到新浏览器中
+            if self.state_path and os.path.exists(self.state_path):
+                logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {self.state_path}")
+                context_options['storage_state'] = self.state_path
+                
+            context = await self.browser.new_context(**context_options)
+
         page = await context.new_page()
         await page.goto("about:blank")
         
@@ -127,7 +135,6 @@ class HexaEngine:
             # ==========================================
             # 人工审核与录制落盘
             # ==========================================
-            import asyncio
             loop = asyncio.get_running_loop()
             prompt_msg = "\n👉 操作对吗？(y: 对 / o: 对，但设为【可选跳过】 / n: 错 / done: 结束): "
             user_input = await loop.run_in_executor(None, input, prompt_msg)
@@ -138,6 +145,13 @@ class HexaEngine:
                 if next_action.action_type != "done":
                     recorder.record_step(current_url, next_action.action_type, stable_target, next_action.input_value, next_action.thought)
                 recorder.save_to_disk()
+                
+                # 提取当前浏览器的所有 Cookie 和 LocalStorage 并保存
+                if self.state_path:
+                    os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
+                    await context.storage_state(path=self.state_path)
+                    logger.info(f"💾 浏览器状态(Cookie/缓存)已永久保存至: {self.state_path}")
+
                 break
                 
             elif user_input == 'o':
@@ -226,12 +240,12 @@ class HexaEngine:
         elif act.action_type == "wait_for_timeout":
             await page.wait_for_timeout(1000)
 
-    async def run_from_trace(self, trace_path: str, context=None):
+    async def run_from_trace(self, trace_path: str, context=None, viewport: dict = None, state_path: str = None, user_agent: str = None):
         """
         克隆回放模式：读取本地 JSON 轨迹，脱离大模型，进行高速确定性执行。
         """
-        import os
         from hexaflow.agents.planner import WorkflowBlueprint
+        import os
         
         if not os.path.exists(trace_path):
             raise FileNotFoundError(f"找不到轨迹文件: {trace_path}")
@@ -244,10 +258,30 @@ class HexaEngine:
         blueprint = WorkflowBlueprint.model_validate_json(trace_data)
         logger.info(f"▶️ 开始回放任务: {blueprint.task_name} (共 {len(blueprint.steps)} 步)")
 
-        # 如果没有传入账号上下文，就新建一个（未来多账号并发就是在这里传不同的 context 进来）
+        # ==========================================
+        # 🚀 核心改造：支持动态注入不同的测试环境
+        # ==========================================
         if not context:
-            context = await self.browser.new_context(viewport={'width': 1280, 'height': 800})
+            # 1. 设置窗口大小（默认桌面，可传入移动端尺寸）
+            vp = viewport or {'width': 1280, 'height': 800}
+            context_options = {'viewport': vp}
             
+            # 2. 伪造设备指纹 (User-Agent)
+            if user_agent:
+                context_options['user_agent'] = user_agent
+                
+            # 3. 动态决定使用哪个账号的缓存数据
+            # 如果传了 state_path 就用传的，没传就用引擎初始化的 self.state_path
+            actual_state = state_path if state_path is not None else getattr(self, 'state_path', None)
+            
+            if actual_state and os.path.exists(actual_state):
+                logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {actual_state}")
+                context_options['storage_state'] = actual_state
+            else:
+                logger.info("✨ 未使用缓存，正以全新无痕环境启动...")
+                
+            context = await self.browser.new_context(**context_options)
+
         page = await context.new_page()
 
         healer = PopupHealer()

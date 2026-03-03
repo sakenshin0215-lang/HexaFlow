@@ -1,0 +1,50 @@
+{
+  "task_name": "Task_20260303_181345",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "当前页面是 about:blank，需要导航到 OKX 的 Web3 首页 https://www.okx.com/web3，以便后续操作。",
+      "pre_check": {
+        "expected_url_contains": "about:blank",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "目标是点击左上角的 '行情' 链接。当前屏幕中包含一个带有文本 '行情' 的链接，其 hexa-id 是 'hexa-2'。根据用户目标，我应该点击这个元素以进入行情页面。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "The goal is to click on 'OKX Boost' after clicking '行情'. The current screen shows an 'OKX Boost' section with the text 'OKX Boost' and a corresponding hexa-id of '[hexa-id=\"hexa-19\"]'. Since the DOM has loaded and the element is visible, clicking this button will fulfill the next step.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"OKX Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"OKX Boost\"",
+        "input_value": null
+      },
+      "is_optional": false
+    }
+  ]
+}

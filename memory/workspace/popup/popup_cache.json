@@ -1,5 +1,5 @@
 {
-  "DIV[H1[\"原生支持 130\"],DIV[A[SPAN[\"开始交易\"]],DIV[BUTTON[SPAN[\"获取 OKX W\"]]]]]": {
-    "selector": "xpath=(//div[contains(@class,'dex-dialog-window')]//button[contains(@class,'dex-plain-button')])[1]"
+  "DIV[DIV[DIV[DIV[SPAN[DIV[SPAN[\"选择支付币种\"]]]]],DIV[DIV[DIV[DIV[DIV[INPUT]],DIV[DIV[\"选择网络：Eth\"],DIV[DIV[BUTTON],DIV[BUTTON],DIV[BUTTON],DIV[BUTTON],DIV[BUTTON],DIV[BUTTON],DIV[BUTTON[\"40+\"]]]],DIV[SPAN[\"代币\"]],DIV[DIV[DIV[DIV[DIV[DIV[DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"ETH\"]],DIV[P[\"Ethereum\"]]]],DIV[DIV[BUTTON]]]]],DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"USDT\"]],DIV[P[\"Tether U\"]]]],DIV[DIV[BUTTON]]]]],DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"USDC\"]],DIV[P[\"USD Coin\"]]]],DIV[DIV[BUTTON]]]]],DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"WBTC\"]],DIV[P[\"Wrapped \"]]]],DIV[DIV[BUTTON]]]]],DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"USDe\"]],DIV[P[\"USDe\"]]]],DIV[DIV[BUTTON]]]]],DIV[BUTTON[DIV[DIV[DIV[DIV[DIV[\"DAI\"]],DIV[P[\"Dai Stab\"]]]],DIV[DIV[BUTTON]]]]]]]]]]]]]]],DIV[DIV[DIV[SPAN[\"选择支付网络\"]]],DIV[DIV[DIV[\"<div cla\"]]]]]": {
+    "selector": "xpath=//div[@role='dialog']//button[contains(@class,'dex-plain-button')][1]"
   }
 }

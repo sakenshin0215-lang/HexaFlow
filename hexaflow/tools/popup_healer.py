@@ -230,8 +230,8 @@ class PopupHealer:
                 return True
             else:
                 logger.warning("⚠️ [Healer] 验证失败，弹窗似乎依然存在。")
-                if used_cache: 
-                    self.cache.invalidate(fingerprint)
+                # if used_cache: 
+                #     self.cache.invalidate(fingerprint)
                 return False
                 
         except Exception as e:
