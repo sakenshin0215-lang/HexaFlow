@@ -15,7 +15,6 @@ class TraceRecorder:
         self.steps = []
         self.step_counter = 1
         
-        # 确保输出目录存在
         os.makedirs(self.workspace_dir, exist_ok=True)
 
     def record_step(self, current_url: str, action_type: str, target: str, input_value: str = None, description: str = "", is_optional: bool = False):

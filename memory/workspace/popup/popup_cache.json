@@ -1,0 +1,5 @@
+{
+  "DIV[H1[\"原生支持 130\"],DIV[A[SPAN[\"开始交易\"]],DIV[BUTTON[SPAN[\"获取 OKX W\"]]]]]": {
+    "selector": "xpath=(//div[contains(@class,'dex-dialog-window')]//button[contains(@class,'dex-plain-button')])[1]"
+  }
+}

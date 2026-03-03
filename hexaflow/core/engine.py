@@ -32,7 +32,6 @@ class HexaEngine:
         """启动浏览器环境"""
         logger.info("🚀 正在启动 Playwright 引擎...")
         self.playwright = await async_playwright().start()
-        # 使用 chromium，可以根据需要传入代理等配置
         self.browser = await self.playwright.chromium.launch(headless=self.headless)
         logger.info("✅ 浏览器启动成功")
 
@@ -73,8 +72,8 @@ class HexaEngine:
             history_str = "\n".join(action_history)
             next_action = await agent.decide_next_action(goal, history_str, current_url, dom_snapshot)
             
-            stable_target = next_action.target # 默认使用 AI 给出的 target
-            
+            stable_target = next_action.target
+
             if next_action.action_type == "done":
                 logger.info("🎉 AI 认为任务已完成！")
             else:
@@ -105,7 +104,7 @@ class HexaEngine:
                         await page.wait_for_timeout(1500) 
                         current_action_log = f"Executed {next_action.action_type} on {stable_target}"
                         action_success = True
-                        break # 成功执行，跳出重试循环
+                        break
                         
                     except Exception as e:
                         error_msg = str(e).lower()
@@ -115,10 +114,7 @@ class HexaEngine:
                             
                             if attempt < max_attempts - 1:
                                 logger.info("🚑 [录制阶段] 唤醒 Healer 扫描异常弹窗...")
-                                
                                 await healer.heal(page)
-                                
-                                # 🚀 强行等待与重试：给前端动画 2 秒钟的消散时间
                                 logger.info("✨ Healer 处理完毕。给前端动画一点时间，即将强行重试主线动作...")
                                 await page.wait_for_timeout(2000) 
                                 continue # 无条件进入下一次循环，重试主线动作！
@@ -127,6 +123,7 @@ class HexaEngine:
                         logger.error(f"❌ 动作执行失败: {e}")
                         current_action_log = f"FAILED to execute {next_action.action_type} on {stable_target}"
                         break
+            
             # ==========================================
             # 人工审核与录制落盘
             # ==========================================
@@ -146,7 +143,6 @@ class HexaEngine:
             elif user_input == 'o':
                 logger.info("✅ 验收通过，并标记为【可选步骤 (Optional)】。")
                 if next_action.action_type != "done":
-                    # 🚀 强化提示：明确告诉 AI 动作已完成，严禁复读！
                     action_history.append(current_action_log + " -> [SUCCESS (OPTIONAL)] - Action completed. DO NOT repeat this target. Move to the next step.")
                     recorder.record_step(current_url, next_action.action_type, stable_target, next_action.input_value, next_action.thought, is_optional=True)
                 continue

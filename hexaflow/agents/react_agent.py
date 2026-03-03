@@ -50,7 +50,6 @@ class ReActAgent:
         Based on the above, what is the SINGLE next action to take?
         """
         
-        # 1. 组装基础的通用调用参数
         call_kwargs = {
             "model": self.model_name,
             "response_model": NextAction,
@@ -60,16 +59,7 @@ class ReActAgent:
             ]
         }
         
-        # 2. 动态参数注入：如果是 Qwen3.5 模型，关闭 Think 模式
-        # 这里使用 lower() 保证兼容 qwen3.5, Qwen-3.5 等各种命名习惯
-        if "qwen3.5" in self.model_name.lower() or "qwen-3.5" in self.model_name.lower():
-            logger.info(f" Qwen3.5, enable_thinking=False")
-            call_kwargs["extra_body"] = {
-                "chat_template_kwargs": {"enable_thinking": False}
-            }
-        
         try:
-            # 3. 将参数解包传入 client
             action = await self.client.chat.completions.create(**call_kwargs)
             logger.info(f"🧠 [Agent 思考]: {action.thought}")
             return action

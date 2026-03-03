@@ -17,14 +17,8 @@ class FlowStep(BaseModel):
     description: str = Field(description="Step description")
     pre_check: PreCheck
     action: StepAction
+    is_optional: bool = Field(default=False, description="如果为 True，回放时找不到元素将静默跳过")
 
 class WorkflowBlueprint(BaseModel):
     task_name: str = Field(description="Task name")
     steps: List[FlowStep] = Field(description="List of execution steps")
-
-class FlowStep(BaseModel):
-    step_id: str = Field(description="Unique step ID")
-    description: str = Field(description="Step description")
-    pre_check: PreCheck
-    action: StepAction
-    is_optional: bool = Field(default=False, description="如果为 True，回放时找不到元素将静默跳过")

@@ -1,0 +1,95 @@
+{
+  "task_name": "Task_20260303_151522",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "The user goal is to open the OKX Web3 homepage. Since the current URL is 'about:blank', I need to navigate to the specified URL to proceed with the task.",
+      "pre_check": {
+        "expected_url_contains": "about:blank",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "The user goal is to click on the '行情' link in the top-left corner of the page. The element with ID 'hexa-2' has the text '行情' and is a link, so clicking it will navigate to the desired page.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "The user's goal is to click into the first token's detailed page. The first token displayed is 'AUTISM', and its detailed page link is visible at [hexa-43]. Clicking this will take us to the token's detail page where we can proceed with the next steps.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"AUTISM\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"AUTISM\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "The goal is to check the '我已知晓交易风险' checkbox before clicking '开始交易'. The current screen shows the checkbox with ID 'hexa-148', so I should click it to proceed.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/solana/8jiVXftnn2ZG6bugK7HAH5j2G3D6TpsG521gqsWwpump",
+        "expected_dom_selector": "text=\"我已知晓交易风险\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"我已知晓交易风险\"",
+        "input_value": null
+      },
+      "is_optional": true
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "The user has already clicked '我已知晓交易风险' and is now on the token detail page. The next step according to the goal is to click '开始交易' to proceed with the trading process.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/solana/8jiVXftnn2ZG6bugK7HAH5j2G3D6TpsG521gqsWwpump",
+        "expected_dom_selector": "text=\"开始交易\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"开始交易\"",
+        "input_value": null
+      },
+      "is_optional": true
+    },
+    {
+      "step_id": "step_6_click",
+      "description": "The user's goal requires clicking '连接钱包' (Connect Wallet) after completing previous steps. The current screen shows the '连接钱包' button with hexa-id 'hexa-160', which is the next logical action to proceed with the task.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/solana/8jiVXftnn2ZG6bugK7HAH5j2G3D6TpsG521gqsWwpump",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null
+      },
+      "is_optional": false
+    }
+  ]
+}

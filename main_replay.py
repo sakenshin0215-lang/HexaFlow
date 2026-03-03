@@ -4,7 +4,7 @@ from hexaflow.core.engine import HexaEngine
 
 async def main():
     
-    trace_file = "memory/workspace/traces/Task_20260302_184455_20260302_184602.json" 
+    trace_file = "memory/workspace/traces/Task_20260303_151522_20260303_151748.json" 
     
     engine = HexaEngine(headless=False) 
     await engine.start()

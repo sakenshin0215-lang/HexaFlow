@@ -23,7 +23,7 @@ class PopupSolution(BaseModel):
 # 2. 弹窗记忆缓存库 (复用你的优秀逻辑)
 # ==========================================
 class PopupCache:
-    def __init__(self, cache_file: str = "memory/workspace/popup_cache.json"):
+    def __init__(self, cache_file: str = "memory/workspace/popup/popup_cache.json"):
         self.cache_file = cache_file
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.experiences = self._load()
@@ -51,7 +51,7 @@ class PopupCache:
             if not roots: return ""
 
             def build_sig(node) -> str:
-                # 🚀 核心升级：不再无视文本，而是提取前几个字符作为指纹的一部分
+                # 不再无视文本，而是提取前几个字符作为指纹的一部分
                 if isinstance(node, NavigableString):
                     text = str(node).strip()
                     # 只取前8个字符，忽略过长的动态文本，保留核心语义
@@ -96,7 +96,7 @@ class PopupCache:
 # 3. 弹窗自愈专家 (Healer Agent)
 # ==========================================
 class PopupHealer:
-    def __init__(self, api_key: str = os.getenv("OPENAI_API_KEY"), base_url: str = os.getenv("OPENAI_BASE_URL"), model_name: str = "openai/gpt-oss-120b"):
+    def __init__(self, model_name: str = os.getenv("POPUP_HEALER_MODEL"), api_key: str = os.getenv("OPENAI_API_KEY"), base_url: str = os.getenv("OPENAI_BASE_URL")):
         self.cache = PopupCache()
         self.model_name = model_name
         raw_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -180,10 +180,6 @@ class PopupHealer:
             ]
         }
         
-        # 兼容 Qwen3.5 原生思考模式关闭
-        if "qwen3.5" in self.model_name.lower() or "qwen-3.5" in self.model_name.lower():
-            call_kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}
-
         try:
             solution = await self.client.chat.completions.create(**call_kwargs)
             logger.info(f"💡 [Healer 思路]: {solution.thought}")
