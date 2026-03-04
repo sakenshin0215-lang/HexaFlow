@@ -17,7 +17,18 @@ class TraceRecorder:
         
         os.makedirs(self.workspace_dir, exist_ok=True)
 
-    def record_step(self, current_url: str, action_type: str, target: str, input_value: str = None, description: str = "", is_optional: bool = False, fingerprint_dict: dict = None):
+    def record_step(
+        self,
+        current_url: str,
+        action_type: str,
+        target: str,
+        input_value: str = None,
+        description: str = "",
+        is_optional: bool = False,
+        fingerprint_dict: dict = None,
+        loop_marker: str = None,
+        loop_name: str = None,
+    ):
         """
         录制一个成功的步骤，增加 fingerprint_dict 参数
         """
@@ -47,12 +58,30 @@ class TraceRecorder:
             description=description or f"执行 {action_type} 操作",
             pre_check=pre_check,
             action=step_action,
-            is_optional=is_optional
+            is_optional=is_optional,
+            loop_marker=loop_marker,
+            loop_name=loop_name,
         )
         
         self.steps.append(flow_step)
         logger.info(f"📼 已录制轨迹节点: {step_id}")
         self.step_counter += 1
+
+    def mark_last_step_loop_start(self, loop_name: str = "main_loop") -> bool:
+        if not self.steps:
+            return False
+        self.steps[-1].loop_marker = "start"
+        self.steps[-1].loop_name = loop_name
+        logger.info(f"🔁 已标记循环开始: step={self.steps[-1].step_id} loop={loop_name}")
+        return True
+
+    def mark_last_step_loop_end(self, loop_name: str = "main_loop") -> bool:
+        if not self.steps:
+            return False
+        self.steps[-1].loop_marker = "end"
+        self.steps[-1].loop_name = loop_name
+        logger.info(f"🔁 已标记循环结束: step={self.steps[-1].step_id} loop={loop_name}")
+        return True
 
     def save_to_disk(self) -> str:
         """

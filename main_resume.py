@@ -1,10 +1,22 @@
 import asyncio
+import os
 
 from hexaflow.core.engine import HexaEngine
+from hexaflow.browser.cdp_runtime import CDPConfig
+from hexaflow.agents.react_agent import ReActAgent
 
 
 async def main():
     engine = HexaEngine(headless=False)
+    enable_ai_repair = os.getenv("ENABLE_REPLAY_AI_REPAIR", "1") == "1"
+    repair_agent = None
+    if enable_ai_repair:
+        repair_agent = ReActAgent(
+            api_key=os.getenv("REPLAY_REPAIR_API_KEY", "ollama"),
+            base_url=os.getenv("REPLAY_REPAIR_BASE_URL", "http://localhost:11434/v1"),
+            model_name=os.getenv("REPLAY_REPAIR_MODEL", "qwen3-vl:8b-instruct")
+        )
+
     suspended = engine.state_machine.list_runs(status="suspended", limit=10)
 
     if not suspended:
@@ -38,13 +50,21 @@ async def main():
                 info += f" detail={detail[:180]}"
             print(info)
 
-    await engine.start()
+    use_cdp = os.getenv("USE_CDP", "1") == "1"
+    cdp_start_url = os.getenv("CDP_START_URL", "https://www.okx.com/web3")
+    await engine.start(
+        use_cdp=use_cdp,
+        cdp_config=CDPConfig() if use_cdp else None,
+        cdp_start_url=cdp_start_url
+    )
     try:
         report_paths = await engine.run_from_trace(
             trace_path=run.trace_path,
             run_id=run.run_id,
             resume=True,
             suspend_on_failure=True,
+            replay_repair_agent=repair_agent,
+            repair_context_window=int(os.getenv("REPAIR_CONTEXT_WINDOW", "5")),
         )
         if report_paths:
             print(f"\n📄 报告(JSON): {report_paths['json_path']}")

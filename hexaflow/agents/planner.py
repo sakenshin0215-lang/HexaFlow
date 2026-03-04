@@ -26,6 +26,26 @@ class FlowStep(BaseModel):
     pre_check: PreCheck
     action: StepAction
     is_optional: bool = Field(default=False, description="如果为 True，回放时找不到元素将静默跳过")
+    guard_url_contains: Optional[str] = Field(
+        default=None,
+        description="Step page guard. If current URL does not contain this value, recovery actions run first.",
+    )
+    on_mismatch_actions: List[StepAction] = Field(
+        default_factory=list,
+        description="Recovery actions executed before this step when page guard fails.",
+    )
+    guard_retry_limit: int = Field(
+        default=2,
+        description="How many times to try page-guard recovery before failing this step.",
+    )
+    loop_marker: Optional[str] = Field(
+        default=None,
+        description="Loop marker: one of [start, end], used by loop replay mode.",
+    )
+    loop_name: Optional[str] = Field(
+        default=None,
+        description="Logical loop name when loop_marker is set.",
+    )
 
 class WorkflowBlueprint(BaseModel):
     task_name: str = Field(description="Task name")

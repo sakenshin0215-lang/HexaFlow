@@ -1,6 +1,6 @@
 {
   "task_name": "okx_web3_connect_wallet_demo",
-  "goal": "打开 OKX Web3 页面，进入行情, 然后点击OKX Boost(注意一定是OKX Boost不是Boost) 的第一个个代币详情，最后点击连接钱包",
+  "goal": "打开 OKX Web3 页面, 然后点击RIVER代币进入详细页面，然后在交易框输入0.01个币值",
   "notes": [
     "如果页面是 SPA 或跨域跳转，优先等待关键 DOM 出现后再点击",
     "遇到弹窗优先尝试关闭、跳过或确认",
@@ -21,5 +21,11 @@
   "failure_policy": {
     "mode": "stop",
     "max_consecutive_failures": 4
+  },
+  "loop_policy": {
+    "enabled": true,
+    "loop_name": "main_loop",
+    "iterations": 10,
+    "max_iteration_retries": 30
   }
 }

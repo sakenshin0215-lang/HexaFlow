@@ -12,6 +12,13 @@ class FailurePolicy(BaseModel):
     max_consecutive_failures: int = Field(default=3, ge=1, le=50)
 
 
+class LoopPolicy(BaseModel):
+    enabled: bool = Field(default=False)
+    loop_name: str = Field(default="main_loop")
+    iterations: int = Field(default=1, ge=1, le=10000)
+    max_iteration_retries: int = Field(default=30, ge=1, le=100000)
+
+
 class TaskSpec(BaseModel):
     task_name: str = Field(default="DynamicTask")
     goal: str = Field(description="Primary business goal")
@@ -28,10 +35,10 @@ class TaskSpec(BaseModel):
         description="Action text containing these keywords will be blocked.",
     )
     failure_policy: FailurePolicy = Field(default_factory=FailurePolicy)
+    loop_policy: LoopPolicy = Field(default_factory=LoopPolicy)
 
     @classmethod
     def from_json_file(cls, path: str) -> "TaskSpec":
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls.model_validate(data)
-

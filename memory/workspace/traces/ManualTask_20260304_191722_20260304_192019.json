@@ -1,0 +1,377 @@
+{
+  "task_name": "ManualTask_20260304_191722",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://web3.okx.com/",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://web3.okx.com/",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "点击行情链接查看实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "行情",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left nav-cefi-market"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "点击OKX Boost按钮",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"OKX Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"OKX Boost\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "OKX Boost",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex dex-popup-var dex-popup dex-tooltip dex-tooltip-var dex-tooltip-neutral PyEdke__dex"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "点击“全部”按钮以查看所有币种的实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"全部\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"全部\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "button",
+          "text": "全部",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-plain-button k1UN01__dex n_0zzZ__dex"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "点击 RIVER 市场名称以查看其实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"RIVER\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"RIVER\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "RIVER",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis font-16 font-bold"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_6_click",
+      "description": "点击 RIVER 币种标签以查看其实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"RIVER\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"RIVER\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "RIVER",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": "start",
+      "loop_name": "main_loop"
+    },
+    {
+      "step_id": "step_7_click",
+      "description": "点击流动性标题以查看相关实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"流动性\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"流动性\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "h2",
+          "text": "流动性",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "font-inherit"
+        }
+      },
+      "is_optional": true,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_8_click",
+      "description": "点击“流动性池”标签查看相关实时行情",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"流动性池\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"流动性池\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "流动性池",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-tabs-pane dex-tabs-pane-spacing dex-tabs-pane-sm dex-tabs-pane-blue dex-tabs-pane-highlight dex-tabs-pane-fill-highlight category-size"
+        }
+      },
+      "is_optional": true,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_9_click",
+      "description": "点击买入标签查看买入行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"买入\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"买入\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "买入",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-tabs-pane dex-tabs-pane-sm dex-tabs-pane-green dex-tabs-pane-segmented dex-tabs-pane-segmented-active"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_10_click",
+      "description": "点击市价标签以查看实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"市价\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"市价\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "市价",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-tabs-pane dex-tabs-pane-xs dex-tabs-pane-blue dex-tabs-pane-underline dex-tabs-pane-underline-active axPFHA__dex"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_11_click",
+      "description": "点击标记为'50'的按钮以切换市场数据视图",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"50\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"50\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "button",
+          "text": "50",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex dex-button-var dex-btn btn-xxs btn-fill-grey btn-rect wcRO7c__dex XEXQJ0__dex"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_12_click",
+      "description": "点击USDT余额不足提示按钮以补充USDT",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"USDT 余额不足，去补充\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"USDT 余额不足，去补充\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "USDT 余额不足，去补充",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "btn-content"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_13_click",
+      "description": "点击关闭按钮以关闭弹窗",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "#okdDialogCloseBtn",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "#okdDialogCloseBtn",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "i",
+          "text": "",
+          "aria_label": "关闭",
+          "placeholder": "",
+          "classes": "wallet-icon icon iconfont wallet-okds-close wallet-dialog-c-btn wallet-a11y-button"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_14_click",
+      "description": "点击RIVER相关元素查看实时行情",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "text=\"RIVER\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"RIVER\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "RIVER",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis"
+        }
+      },
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": "end",
+      "loop_name": "main_loop"
+    }
+  ]
+}

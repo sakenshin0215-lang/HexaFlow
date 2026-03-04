@@ -3,6 +3,7 @@ import asyncio
 import logging
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page, BrowserContext
+from hexaflow.browser.cdp_runtime import CDPConfig, ensure_cdp_browser
 from hexaflow.core.trace_recorder import TraceRecorder
 from hexaflow.core.state_machine import StateMachine
 from hexaflow.core.run_reporter import RunReporter
@@ -40,13 +41,34 @@ class HexaEngine:
         self.state_path = state_path
         self.state_machine = StateMachine(db_path=runtime_db_path)
         self.run_reporter = RunReporter(self.state_machine)
+        self.use_cdp = False
+        self.cdp_config = None
         
-    async def start(self):
+    async def start(self, use_cdp: bool = False, cdp_config: CDPConfig = None, cdp_start_url: str = "about:blank"):
         """启动浏览器环境"""
         logger.info("🚀 正在启动 Playwright 引擎...")
         self.playwright = await async_playwright().start()
+        self.use_cdp = use_cdp
+
+        if use_cdp:
+            self.cdp_config = cdp_config or CDPConfig()
+            # ensure_cdp_browser 是同步函数，用线程池避免阻塞事件循环
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, ensure_cdp_browser, self.cdp_config, cdp_start_url
+            )
+            self.browser = await self.playwright.chromium.connect_over_cdp(
+                self.cdp_config.endpoint
+            )
+            logger.info(
+                f"✅ 已通过CDP连接浏览器: {self.cdp_config.endpoint} | "
+                f"user_data_dir={self.cdp_config.user_data_dir} | "
+                f"profile={self.cdp_config.profile_directory}"
+            )
+            return
+
         self.browser = await self.playwright.chromium.launch(headless=self.headless)
-        logger.info("✅ 浏览器启动成功")
+        logger.info("✅ 浏览器启动成功 (Playwright launch)")
 
     async def stop(self):
         """关闭浏览器环境"""
@@ -56,11 +78,73 @@ class HexaEngine:
             await self.playwright.stop()
         logger.info("🛑 引擎已关闭")
 
+    async def _detect_human_intervention_reason(self, page: Page) -> str:
+        url = (page.url or "").lower()
+        if any(k in url for k in ["login", "signin", "auth", "verify", "captcha", "challenge"]):
+            return f"URL 命中登录/验证路径: {page.url}"
+
+        text_checks = [
+            "登录", "重新登录", "验证码", "验证", "人机验证", "二次验证", "双重验证",
+            "Sign in", "Log in", "Verify", "CAPTCHA", "2FA", "Authentication",
+            "解锁钱包", "Unlock", "Wallet password", "请输入密码"
+        ]
+        for t in text_checks:
+            try:
+                if await page.get_by_text(t, exact=False).first.is_visible(timeout=800):
+                    return f"页面检测到人工验证文案: {t}"
+            except Exception:
+                continue
+        return ""
+
+    async def _human_handoff_if_needed(self, page: Page, checkpoint: str = "", enabled: bool = True) -> bool:
+        if not enabled:
+            return False
+        reason = await self._detect_human_intervention_reason(page)
+        if not reason:
+            return False
+
+        line = "=" * 72
+        logger.warning("\n" + line)
+        logger.warning("[人工接管] 检测到需要人工处理")
+        if checkpoint:
+            logger.warning(f"检查点: {checkpoint}")
+        logger.warning(f"原因: {reason}")
+        logger.warning(f"当前 URL: {page.url}")
+        logger.warning("请在浏览器里完成：重新登录/验证码/钱包解锁/签名确认。")
+        logger.warning("完成后回终端按回车继续。")
+        logger.warning(line + "\n")
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, input, "[等待人工] 完成后按回车继续... ")
+        return True
+
     async def _save_browser_state(self, context: BrowserContext):
         if self.state_path:
             os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
             await context.storage_state(path=self.state_path)
             logger.info(f"💾 浏览器状态(Cookie/缓存)已永久保存至: {self.state_path}")
+
+    async def _resolve_context(self, context: BrowserContext = None, context_options: dict = None):
+        """
+        统一获取可用 context：
+        - 传入 context 时优先使用
+        - CDP 模式默认复用 browser.contexts[0]（保留真实 profile、扩展、登录态）
+        - 非 CDP 模式创建新 context
+        """
+        if context:
+            return context
+
+        if self.use_cdp:
+            if self.browser and self.browser.contexts:
+                logger.info("🧩 CDP模式：复用现有浏览器上下文（保留 profile/扩展/登录态）")
+                if context_options and context_options.get("storage_state"):
+                    logger.warning("⚠️ CDP复用上下文时忽略 storage_state 注入（以真实 profile 为准）")
+                return self.browser.contexts[0]
+
+            logger.warning("⚠️ CDP模式未发现现有上下文，降级创建新上下文（可能无扩展态）")
+            return await self.browser.new_context(**(context_options or {}))
+
+        return await self.browser.new_context(**(context_options or {}))
 
     async def _capture_suspend_snapshot(self, page: Page, run_id: str, step_id: str) -> str:
         from datetime import datetime
@@ -290,6 +374,7 @@ class HexaEngine:
         blocked_keywords: list[str] = None,
         max_consecutive_failures: int = 999999,
         failure_mode: str = "continue",
+        human_handoff_on_auth: bool = True,
     ):
         from datetime import datetime
         logger.info(f"▶️ 开始执行动态自适应任务: {goal} (manual_review={manual_review})")
@@ -303,15 +388,17 @@ class HexaEngine:
 
         if not context:
             context_options = {'viewport': {'width': 1280, 'height': 800}}
-            # 如果存在历史状态文件，则作为“记忆”注入到新浏览器中
-            if self.state_path and os.path.exists(self.state_path):
+            # 非CDP模式下才注入 storage_state；CDP复用真实profile上下文
+            if (not self.use_cdp) and self.state_path and os.path.exists(self.state_path):
                 logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {self.state_path}")
                 context_options['storage_state'] = self.state_path
-                
-            context = await self.browser.new_context(**context_options)
+            context = await self._resolve_context(context=context, context_options=context_options)
 
         page = await context.new_page()
         await page.goto(start_url)
+        await self._human_handoff_if_needed(
+            page, checkpoint="动态任务启动检查", enabled=human_handoff_on_auth
+        )
         if start_url != "about:blank":
             recorder.record_step(
                 current_url=start_url,
@@ -384,6 +471,14 @@ class HexaEngine:
                             
                         except Exception as e:
                             error_msg = str(e).lower()
+                            handled = await self._human_handoff_if_needed(
+                                page,
+                                checkpoint=f"动态步骤失败前人工检查(step={step_count})",
+                                enabled=human_handoff_on_auth,
+                            )
+                            if handled:
+                                await page.wait_for_timeout(800)
+                                continue
                             # 如果是被弹窗遮挡、不可点击或超时，触发自愈！
                             if "timeout" in error_msg or "intercepted" in error_msg or "not visible" in error_msg:
                                 logger.warning(f"🛑 动作受阻 (可能被弹窗拦截)。")
@@ -523,6 +618,11 @@ class HexaEngine:
             return
 
         # ==================================
+        # 1.5 页面守卫：执行动作前先确认在该步骤规定页面
+        # ==================================
+        await self._ensure_step_page_guard(page, step)
+
+        # ==================================
         # 2. 增强前置校验与可见元素寻找 (Pre-check & Filter)
         # ==================================
         actual_target = act.target
@@ -592,6 +692,132 @@ class HexaEngine:
         elif act.action_type == "wait_for_timeout":
             await page.wait_for_timeout(1000)
 
+    async def _execute_override_action(self, page: Page, action_type: str, target: str = None, input_value: str = None):
+        """
+        执行 AI 修复器给出的临时动作，不修改原 trace 文件。
+        """
+        action_type = (action_type or "").strip().lower()
+        if action_type == "navigate":
+            if not target:
+                raise Exception("override navigate 缺少 target URL")
+            await page.goto(target, wait_until="domcontentloaded")
+            return
+
+        if action_type == "click":
+            if not target:
+                raise Exception("override click 缺少 target selector")
+            loc = page.locator(target).first
+            await loc.hover(timeout=5000)
+            await page.wait_for_timeout(200)
+            await loc.click(timeout=5000)
+            return
+
+        if action_type == "type":
+            if not target:
+                raise Exception("override type 缺少 target selector")
+            loc = page.locator(target).first
+            await loc.hover(timeout=5000)
+            await loc.fill("")
+            await loc.type(input_value or "", delay=70, timeout=5000)
+            return
+
+        if action_type == "wait_for_timeout":
+            delay_ms = 1000
+            try:
+                if input_value:
+                    delay_ms = int(float(input_value) * 1000) if "." in str(input_value) else int(input_value)
+            except Exception:
+                delay_ms = 1000
+            await page.wait_for_timeout(max(200, delay_ms))
+            return
+
+        raise Exception(f"override 不支持的动作类型: {action_type}")
+
+    async def _run_mismatch_actions(self, page: Page, step) -> bool:
+        actions = getattr(step, "on_mismatch_actions", None) or []
+        if not actions:
+            return False
+        for idx, action in enumerate(actions, start=1):
+            logger.info(
+                f"🧭 [PageGuard] 执行回退动作 {idx}/{len(actions)}: {action.action_type} -> {action.target}"
+            )
+            await self._execute_override_action(
+                page=page,
+                action_type=action.action_type,
+                target=action.target,
+                input_value=action.input_value,
+            )
+            await page.wait_for_timeout(800)
+        return True
+
+    async def _ensure_step_page_guard(self, page: Page, step):
+        """
+        步骤执行前页面守卫：
+        - 当前 URL 不符合 guard 时，先执行 on_mismatch_actions
+        - 若仍不符合，再尝试基于 URL 片段自动回跳
+        """
+        required_url = getattr(step, "guard_url_contains", None) or step.pre_check.expected_url_contains
+        if not required_url:
+            return
+        required_url = required_url.strip()
+        if required_url in ("", "body"):
+            return
+
+        retry_limit = max(1, int(getattr(step, "guard_retry_limit", 2)))
+        for attempt in range(1, retry_limit + 1):
+            if required_url in (page.url or ""):
+                return
+
+            logger.warning(
+                f"⚠️ [PageGuard] 步骤页面不匹配(step={step.step_id}) "
+                f"expect contains='{required_url}', current='{page.url}', attempt={attempt}/{retry_limit}"
+            )
+
+            used_custom = False
+            try:
+                used_custom = await self._run_mismatch_actions(page, step)
+            except Exception as e:
+                logger.warning(f"⚠️ [PageGuard] 自定义回退动作执行失败: {e}")
+
+            if required_url in (page.url or ""):
+                return
+
+            if not used_custom:
+                inferred = self._normalize_url_candidate(required_url)
+                if inferred:
+                    try:
+                        logger.info(f"🧭 [PageGuard] 自动回跳到目标页面: {inferred}")
+                        await page.goto(inferred, wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(800)
+                    except Exception as e:
+                        logger.warning(f"⚠️ [PageGuard] 自动回跳失败: {e}")
+                else:
+                    try:
+                        logger.info("🧭 [PageGuard] 尝试后退恢复页面")
+                        await page.go_back(wait_until="domcontentloaded", timeout=8000)
+                        await page.wait_for_timeout(700)
+                    except Exception:
+                        pass
+
+            if required_url in (page.url or ""):
+                return
+
+        raise Exception(
+            f"PageGuardError: step={step.step_id} 期望页面包含 '{required_url}'，但当前为 '{page.url}'"
+        )
+
+    @staticmethod
+    def _build_recent_steps_text(blueprint, current_index: int, window: int = 5) -> str:
+        start = max(0, current_index - window)
+        chunks = []
+        for idx in range(start, current_index):
+            s = blueprint.steps[idx]
+            chunks.append(
+                f"[{idx}] step_id={s.step_id} desc={s.description} "
+                f"action={s.action.action_type} target={s.action.target} optional={s.is_optional}"
+            )
+        return "\n".join(chunks) if chunks else "No previous steps."
+
     async def run_from_trace(
         self,
         trace_path: str,
@@ -605,6 +831,9 @@ class HexaEngine:
         subflow_window: int = 2,
         subflow_skip_risky: bool = True,
         subflow_risky_keywords: list[str] = None,
+        human_handoff_on_auth: bool = True,
+        replay_repair_agent=None,
+        repair_context_window: int = 5,
     ):
         """
         克隆回放模式：读取本地 JSON 轨迹，脱离大模型，进行高速确定性执行。
@@ -652,17 +881,15 @@ class HexaEngine:
             if user_agent:
                 context_options['user_agent'] = user_agent
                 
-            # 3. 动态决定使用哪个账号的缓存数据
-            # 如果传了 state_path 就用传的，没传就用引擎初始化的 self.state_path
+            # 3. 动态决定使用哪个账号的缓存数据（仅非CDP时生效）
             actual_state = state_path if state_path is not None else getattr(self, 'state_path', None)
-            
-            if actual_state and os.path.exists(actual_state):
+            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
                 logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {actual_state}")
                 context_options['storage_state'] = actual_state
-            else:
+            elif not self.use_cdp:
                 logger.info("✨ 未使用缓存，正以全新无痕环境启动...")
-                
-            context = await self.browser.new_context(**context_options)
+
+            context = await self._resolve_context(context=context, context_options=context_options)
 
         page = await context.new_page()
         if start_index < len(blueprint.steps):
@@ -675,12 +902,15 @@ class HexaEngine:
                 if bootstrap_url:
                     logger.info(f"🧭 回放预热: 当前是 about:blank，自动导航到 {bootstrap_url}")
                     await page.goto(bootstrap_url, wait_until="domcontentloaded")
+        await self._human_handoff_if_needed(
+            page, checkpoint="回放启动检查", enabled=human_handoff_on_auth
+        )
 
         healer = PopupHealer()
 
         for step_index, step in enumerate(blueprint.steps[start_index:], start=start_index):
             self.state_machine.mark_step_started(run_state.run_id, step_index, step.step_id)
-            max_attempts = 4  # 主线重试 + 多层恢复
+            max_attempts = 5  # 主线重试 + 多层恢复 + AI修复
             for attempt in range(max_attempts):
                 try:
                     await self._execute_deterministic_step(page, step)
@@ -689,6 +919,21 @@ class HexaEngine:
                     
                 except Exception as e:
                     error_msg = str(e).lower()
+                    handled = await self._human_handoff_if_needed(
+                        page,
+                        checkpoint=f"回放步骤失败人工检查(step_id={step.step_id})",
+                        enabled=human_handoff_on_auth,
+                    )
+                    if handled and attempt < max_attempts - 1:
+                        self.state_machine.add_event(
+                            run_state.run_id,
+                            event="recovery_human_handoff",
+                            detail=f"step={step.step_id} resumed_after_human=True",
+                            step_index=step_index,
+                            step_id=step.step_id,
+                        )
+                        await page.wait_for_timeout(800)
+                        continue
                     # 如果是被弹窗遮挡、不可点击或超时，触发自愈！
                     if getattr(step, 'is_optional', False) and ("timeout" in error_msg or "not visible" in error_msg):
                         logger.info(f"⏭️ [可选步骤] 元素未出现，安全跳过: {step.step_id}")
@@ -758,6 +1003,96 @@ class HexaEngine:
                                 )
                                 await page.wait_for_timeout(1200)
                                 continue
+
+                            if attempt == 3 and replay_repair_agent:
+                                logger.info("🧠 [回放阶段] 唤醒 AI 修复器分析最近步骤并生成修复动作...")
+                                dom_snapshot = await DomParser.get_interactive_elements(page)
+                                recent_steps = self._build_recent_steps_text(
+                                    blueprint=blueprint,
+                                    current_index=step_index,
+                                    window=repair_context_window,
+                                )
+                                decision = await replay_repair_agent.repair_failed_replay_step(
+                                    task_name=blueprint.task_name,
+                                    recent_steps=recent_steps,
+                                    current_url=page.url,
+                                    dom_snapshot=dom_snapshot,
+                                    failed_step_desc=step.description,
+                                    failed_action_type=step.action.action_type,
+                                    failed_target=step.action.target,
+                                    last_error=str(e),
+                                )
+
+                                self.state_machine.add_event(
+                                    run_state.run_id,
+                                    event="recovery_ai_decision",
+                                    detail=(
+                                        f"step={step.step_id} strategy={decision.strategy} "
+                                        f"confidence={decision.confidence:.2f} thought={decision.thought}"
+                                    ),
+                                    step_index=step_index,
+                                    step_id=step.step_id,
+                                )
+
+                                if decision.strategy == "skip_step":
+                                    reason = decision.skip_reason or "AI 建议跳过该步骤"
+                                    logger.warning(f"⏭️ [AI修复] 跳过步骤: {step.step_id} | {reason}")
+                                    self.state_machine.mark_step_skipped(
+                                        run_state.run_id, step_index, step.step_id, reason
+                                    )
+                                    break
+
+                                if decision.strategy == "human_handoff":
+                                    logger.warning("👤 [AI修复] 建议人工接管后继续")
+                                    await self._human_handoff_if_needed(
+                                        page,
+                                        checkpoint=f"AI建议人工接管(step_id={step.step_id})",
+                                        enabled=True,
+                                    )
+                                    await page.wait_for_timeout(800)
+                                    continue
+
+                                if decision.strategy in ("retry_with_new_selector", "replace_action"):
+                                    try:
+                                        if decision.strategy == "retry_with_new_selector":
+                                            action_type = step.action.action_type
+                                            target = decision.target
+                                            input_value = step.action.input_value
+                                        else:
+                                            action_type = decision.action_type or step.action.action_type
+                                            target = decision.target
+                                            input_value = decision.input_value
+
+                                        await self._execute_override_action(
+                                            page=page,
+                                            action_type=action_type,
+                                            target=target,
+                                            input_value=input_value,
+                                        )
+                                        logger.info(
+                                            f"✅ [AI修复] 临时动作执行成功: action={action_type} target={target}"
+                                        )
+                                        self.state_machine.add_event(
+                                            run_state.run_id,
+                                            event="recovery_ai_applied",
+                                            detail=f"step={step.step_id} action={action_type} target={target}",
+                                            step_index=step_index,
+                                            step_id=step.step_id,
+                                        )
+                                        self.state_machine.mark_step_success(
+                                            run_state.run_id, step_index, step.step_id
+                                        )
+                                        break
+                                    except Exception as ai_exec_err:
+                                        logger.warning(f"⚠️ [AI修复] 临时动作执行失败: {ai_exec_err}")
+                                        self.state_machine.add_event(
+                                            run_state.run_id,
+                                            event="recovery_ai_failed",
+                                            detail=f"step={step.step_id} error={ai_exec_err}",
+                                            step_index=step_index,
+                                            step_id=step.step_id,
+                                        )
+                                        continue
                         else:
                             logger.error("❌ 已达到最大重试次数，主线动作依然失败。")
                             screenshot_path = await self._capture_suspend_snapshot(
@@ -803,6 +1138,305 @@ class HexaEngine:
         # await loop.run_in_executor(None, input, "\n👉 回放已完成，请查看浏览器现场。按【回车键】关闭浏览器并结束任务...")
         # await page.close()
 
+    @staticmethod
+    def _find_loop_range(steps, loop_name: str):
+        start_idx = None
+        end_idx = None
+        for i, step in enumerate(steps):
+            if getattr(step, "loop_marker", None) == "start" and getattr(step, "loop_name", None) == loop_name:
+                start_idx = i
+                break
+        if start_idx is None:
+            return None, None
+        for j in range(start_idx, len(steps)):
+            step = steps[j]
+            if getattr(step, "loop_marker", None) == "end" and getattr(step, "loop_name", None) == loop_name:
+                end_idx = j
+                break
+        return start_idx, end_idx
+
+    async def _execute_step_for_loop(
+        self,
+        page: Page,
+        step,
+        healer: PopupHealer,
+        human_handoff_on_auth: bool,
+        replay_repair_agent=None,
+        task_name: str = "",
+        recent_steps_text: str = "",
+        max_attempts: int = 5,
+    ) -> bool:
+        for attempt in range(max_attempts):
+            try:
+                await self._execute_deterministic_step(page, step)
+                return True
+            except Exception as e:
+                error_msg = str(e).lower()
+                handled = await self._human_handoff_if_needed(
+                    page,
+                    checkpoint=f"循环步骤失败人工检查(step_id={step.step_id})",
+                    enabled=human_handoff_on_auth,
+                )
+                if handled and attempt < max_attempts - 1:
+                    await page.wait_for_timeout(800)
+                    continue
+
+                if "timeout" in error_msg or "intercepted" in error_msg or "not visible" in error_msg or "dom matching failed" in error_msg:
+                    if attempt == 0:
+                        await healer.heal(page)
+                        await page.wait_for_timeout(1000)
+                        continue
+                    if attempt == 1:
+                        await self._attempt_wrong_page_recovery(page, step)
+                        await page.wait_for_timeout(900)
+                        continue
+                    if attempt == 2 and replay_repair_agent:
+                        try:
+                            dom_snapshot = await DomParser.get_interactive_elements(page)
+                            decision = await replay_repair_agent.repair_failed_replay_step(
+                                task_name=task_name,
+                                recent_steps=recent_steps_text or "No previous steps.",
+                                current_url=page.url,
+                                dom_snapshot=dom_snapshot,
+                                failed_step_desc=step.description,
+                                failed_action_type=step.action.action_type,
+                                failed_target=step.action.target,
+                                last_error=str(e),
+                            )
+                            if decision.strategy == "skip_step":
+                                return True
+                            if decision.strategy == "human_handoff":
+                                await self._human_handoff_if_needed(
+                                    page,
+                                    checkpoint=f"AI建议人工接管(step_id={step.step_id})",
+                                    enabled=True,
+                                )
+                                continue
+                            if decision.strategy in ("retry_with_new_selector", "replace_action"):
+                                if decision.strategy == "retry_with_new_selector":
+                                    action_type = step.action.action_type
+                                    target = decision.target
+                                    input_value = step.action.input_value
+                                else:
+                                    action_type = decision.action_type or step.action.action_type
+                                    target = decision.target
+                                    input_value = decision.input_value
+                                await self._execute_override_action(
+                                    page=page,
+                                    action_type=action_type,
+                                    target=target,
+                                    input_value=input_value,
+                                )
+                                return True
+                        except Exception:
+                            pass
+                if attempt >= max_attempts - 1:
+                    return False
+        return False
+
+    async def run_loop_from_trace(
+        self,
+        trace_path: str,
+        loop_iterations: int,
+        loop_name: str = "main_loop",
+        max_iteration_retries: int = 30,
+        context=None,
+        viewport: dict = None,
+        state_path: str = None,
+        user_agent: str = None,
+        human_handoff_on_auth: bool = True,
+        replay_repair_agent=None,
+        repair_context_window: int = 5,
+    ):
+        """
+        循环任务执行器：
+        - 依据 trace 中的 loop_marker(start/end) 定义循环区间
+        - 循环次数由外部参数指定
+        - 仅当“整轮循环步骤全部成功”才计为完成一次
+        - 失败则整轮重试，直到成功或超过 max_iteration_retries
+        """
+        from hexaflow.agents.planner import WorkflowBlueprint
+
+        if loop_iterations < 1:
+            raise ValueError("loop_iterations 必须 >= 1")
+
+        if not os.path.exists(trace_path):
+            raise FileNotFoundError(f"找不到轨迹文件: {trace_path}")
+
+        logger.info(f"📂 正在加载循环轨迹: {trace_path}")
+        with open(trace_path, "r", encoding="utf-8") as f:
+            trace_data = f.read()
+        blueprint = WorkflowBlueprint.model_validate_json(trace_data)
+
+        loop_start, loop_end = self._find_loop_range(blueprint.steps, loop_name=loop_name)
+        if loop_start is None or loop_end is None or loop_start > loop_end:
+            raise ValueError(
+                f"未在 trace 中找到有效循环标记: loop_name={loop_name} (start/end)"
+            )
+
+        run_state = self.state_machine.start_or_resume(
+            trace_path=trace_path,
+            task_name=f"{blueprint.task_name}::loop({loop_name})",
+            total_steps=len(blueprint.steps),
+            resume=False,
+        )
+        logger.info(
+            f"🔁 循环任务启动: run_id={run_state.run_id} loop={loop_name} "
+            f"range=[{loop_start}, {loop_end}] iterations={loop_iterations}"
+        )
+
+        if not context:
+            vp = viewport or {"width": 1280, "height": 800}
+            context_options = {"viewport": vp}
+            if user_agent:
+                context_options["user_agent"] = user_agent
+            actual_state = state_path if state_path is not None else getattr(self, "state_path", None)
+            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
+                context_options["storage_state"] = actual_state
+            context = await self._resolve_context(context=context, context_options=context_options)
+
+        page = await context.new_page()
+        first_bootstrap = self._infer_bootstrap_url(blueprint, 0)
+        if first_bootstrap:
+            await page.goto(first_bootstrap, wait_until="domcontentloaded")
+        await self._human_handoff_if_needed(page, checkpoint="循环任务启动检查", enabled=human_handoff_on_auth)
+
+        healer = PopupHealer()
+        completed_loops = 0
+
+        try:
+            # A) 循环前步骤，只执行一次
+            pre_steps = blueprint.steps[:loop_start]
+            for idx, step in enumerate(pre_steps):
+                recent = self._build_recent_steps_text(blueprint, idx, repair_context_window)
+                ok = await self._execute_step_for_loop(
+                    page=page,
+                    step=step,
+                    healer=healer,
+                    human_handoff_on_auth=human_handoff_on_auth,
+                    replay_repair_agent=replay_repair_agent,
+                    task_name=blueprint.task_name,
+                    recent_steps_text=recent,
+                )
+                if not ok:
+                    raise Exception(f"循环前置步骤失败: {step.step_id}")
+
+            # B) 循环区间
+            loop_steps = blueprint.steps[loop_start: loop_end + 1]
+            for i in range(1, loop_iterations + 1):
+                iteration_retry = 0
+                while True:
+                    iteration_retry += 1
+                    logger.info(
+                        f"🔁 开始第 {i}/{loop_iterations} 次循环尝试 (retry={iteration_retry}/{max_iteration_retries})"
+                    )
+                    iter_ok = True
+                    for offset, step in enumerate(loop_steps):
+                        step_index = loop_start + offset
+                        recent = self._build_recent_steps_text(
+                            blueprint, step_index, repair_context_window
+                        )
+                        ok = await self._execute_step_for_loop(
+                            page=page,
+                            step=step,
+                            healer=healer,
+                            human_handoff_on_auth=human_handoff_on_auth,
+                            replay_repair_agent=replay_repair_agent,
+                            task_name=blueprint.task_name,
+                            recent_steps_text=recent,
+                        )
+                        if not ok:
+                            iter_ok = False
+                            break
+
+                    if iter_ok:
+                        completed_loops += 1
+                        remaining = loop_iterations - completed_loops
+                        logger.info(
+                            f"✅ 循环完成: {completed_loops}/{loop_iterations} (remaining={remaining})"
+                        )
+                        self.state_machine.add_event(
+                            run_state.run_id,
+                            event="loop_iteration_completed",
+                            detail=f"loop={loop_name} completed={completed_loops} remaining={remaining}",
+                        )
+                        break
+
+                    if iteration_retry >= max_iteration_retries:
+                        raise Exception(
+                            f"循环第 {i} 轮重试超过上限({max_iteration_retries})，仍未成功"
+                        )
+
+                    self.state_machine.add_event(
+                        run_state.run_id,
+                        event="loop_iteration_retry",
+                        detail=f"loop={loop_name} iteration={i} retry={iteration_retry}",
+                    )
+                    logger.warning(f"⚠️ 第 {i} 次循环未成功，本轮重试。")
+
+            # C) 循环后步骤，只执行一次
+            post_steps = blueprint.steps[loop_end + 1:]
+            for idx2, step in enumerate(post_steps, start=loop_end + 1):
+                recent = self._build_recent_steps_text(blueprint, idx2, repair_context_window)
+                ok = await self._execute_step_for_loop(
+                    page=page,
+                    step=step,
+                    healer=healer,
+                    human_handoff_on_auth=human_handoff_on_auth,
+                    replay_repair_agent=replay_repair_agent,
+                    task_name=blueprint.task_name,
+                    recent_steps_text=recent,
+                )
+                if not ok:
+                    raise Exception(f"循环后置步骤失败: {step.step_id}")
+
+            self.state_machine.mark_run_completed(run_state.run_id)
+            report_paths = self._save_run_report(run_state.run_id)
+            logger.info("🎉 循环任务执行完成")
+            return {
+                "completed_loops": completed_loops,
+                "target_loops": loop_iterations,
+                "remaining_loops": max(0, loop_iterations - completed_loops),
+                "report_paths": report_paths,
+            }
+        except Exception as e:
+            detail = str(e)
+            screenshot_path = await self._capture_suspend_snapshot(page, run_state.run_id, "loop_task")
+            if screenshot_path:
+                detail = f"{detail}\n[screenshot]: {screenshot_path}"
+            self.state_machine.mark_run_suspended(run_state.run_id, loop_start, "loop_task", detail)
+            self._save_run_report(run_state.run_id)
+            raise
+
+    async def run_loop_task_from_spec(
+        self,
+        trace_path: str,
+        spec_input,
+        context=None,
+        replay_repair_agent=None,
+    ):
+        if isinstance(spec_input, TaskSpec):
+            spec = spec_input
+        elif isinstance(spec_input, str):
+            spec = TaskSpec.from_json_file(spec_input)
+        elif isinstance(spec_input, dict):
+            spec = TaskSpec.model_validate(spec_input)
+        else:
+            raise ValueError("Unsupported task spec input type")
+
+        if not spec.loop_policy.enabled:
+            raise ValueError("TaskSpec.loop_policy.enabled 为 false，无法运行循环任务。")
+
+        return await self.run_loop_from_trace(
+            trace_path=trace_path,
+            loop_iterations=spec.loop_policy.iterations,
+            loop_name=spec.loop_policy.loop_name,
+            max_iteration_retries=spec.loop_policy.max_iteration_retries,
+            context=context,
+            human_handoff_on_auth=True,
+            replay_repair_agent=replay_repair_agent,
+        )
+
     async def run_manual_record_task(self, goal: str, agent, start_url: str = "https://www.google.com", context: BrowserContext = None):
         """
         人工专家示教模式：用户手动点击，系统拦截并由 AI 分析记录
@@ -818,10 +1452,10 @@ class HexaEngine:
         if not context:
             context_options = {'viewport': {'width': 1280, 'height': 800}}
             actual_state = getattr(self, 'state_path', None)
-            if actual_state and os.path.exists(actual_state):
+            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
                 logger.info(f"🍪 发现缓存！加载本地浏览器状态: {actual_state}")
                 context_options['storage_state'] = actual_state
-            context = await self.browser.new_context(**context_options)
+            context = await self._resolve_context(context=context, context_options=context_options)
             
         page = await context.new_page()
         action_queue = asyncio.Queue()
@@ -837,6 +1471,7 @@ class HexaEngine:
         // 注意：这里不需要 () => {} 包裹，add_init_script 会直接按顺序执行这里的代码
         if (!window._hexaRecorderInjected) {
             window._hexaRecorderInjected = true;
+            window._hexaLastTypeReport = null;
             
             document.addEventListener('click', (e) => {
                 // 如果是脚本代点的，或者是鼠标右键，则忽略
@@ -885,6 +1520,55 @@ class HexaEngine:
                     });
                 }
             }, { capture: true }); // 使用捕获阶段优先拦截
+
+            // 记录输入动作：在 change 阶段上报，避免每个按键都刷一条
+            document.addEventListener('change', (e) => {
+                if (window._isAutomated) return;
+                if (!e.isTrusted) return;
+                const el = e.target;
+                if (!el || el.nodeType !== 1) return;
+
+                const tag = el.tagName ? el.tagName.toLowerCase() : '';
+                const isEditable = el.isContentEditable || ['input', 'textarea', 'select'].includes(tag);
+                if (!isEditable) return;
+
+                let inputValue = '';
+                if (el.isContentEditable) inputValue = (el.innerText || '').trim();
+                else inputValue = (el.value || '').trim();
+                if (!inputValue) return;
+
+                const fp = {
+                    tag_name: tag || "unknown",
+                    text: (el.innerText || el.value || "").trim().substring(0, 50).replace(/\\n/g, ' '),
+                    aria_label: el.getAttribute ? (el.getAttribute('aria-label') || "") : "",
+                    placeholder: el.placeholder || "",
+                    classes: (el.classList ? Array.from(el.classList).join(' ') : "")
+                };
+
+                let target_selector = tag || 'input';
+                if (el.id) target_selector = `#${el.id}`;
+                else if (fp.aria_label) target_selector = `${tag}[aria-label="${fp.aria_label}"]`;
+                else if (fp.placeholder) target_selector = `${tag}[placeholder="${fp.placeholder}"]`;
+
+                // 去抖：相同目标+相同值+相同URL在2秒内不重复上报
+                const reportKey = `${window.location.href}|${target_selector}|${inputValue}`;
+                const now = Date.now();
+                if (window._hexaLastTypeReport && window._hexaLastTypeReport.key === reportKey && now - window._hexaLastTypeReport.ts < 2000) {
+                    return;
+                }
+                window._hexaLastTypeReport = { key: reportKey, ts: now };
+
+                if (window.reportUserAction) {
+                    window.reportUserAction({
+                        action_type: 'type',
+                        target_selector: target_selector,
+                        exact_selector: null,
+                        input_value: inputValue,
+                        fingerprint: fp,
+                        url: window.location.href
+                    });
+                }
+            }, { capture: true });
         }
         """
         # 确保每个页面/刷新后都注入拦截器
@@ -912,8 +1596,12 @@ class HexaEngine:
             fp = action_data.get('fingerprint', {})
             target_sel = action_data.get('target_selector', '')
             exact_sel = action_data.get('exact_selector', '')
+            input_value = action_data.get('input_value', None)
             
-            logger.info(f"\n⚡ 检测到你的点击: <{fp.get('tag_name')}> '{fp.get('text')}'")
+            if action_data.get('action_type') == 'type':
+                logger.info(f"\n⌨️ 检测到你的输入: <{fp.get('tag_name')}> value='{(input_value or '')[:60]}'")
+            else:
+                logger.info(f"\n⚡ 检测到你的点击: <{fp.get('tag_name')}> '{fp.get('text')}'")
             
             # AI 意图分析
             analysis = await agent.analyze_manual_action(goal, action_data)
@@ -921,7 +1609,12 @@ class HexaEngine:
             logger.info(f"📝 拟录制描述: {analysis.description}")
             
             loop = asyncio.get_running_loop()
-            prompt_msg = "\n👉 录制这步操作吗？(y: 录制并放行 / o: 设为可选并放行 / n: 舍弃 / done: 结束录制): "
+            prompt_msg = (
+                "\n👉 录制这步操作吗？"
+                "(y: 录制并放行 / o: 设为可选并放行 / "
+                "ls: 录制并标记循环开始 / le: 录制并标记循环结束 / "
+                "n: 舍弃 / done: 结束录制): "
+            )
             user_input = await loop.run_in_executor(None, input, prompt_msg)
             user_input = user_input.strip().lower()
             
@@ -933,27 +1626,37 @@ class HexaEngine:
                     await context.storage_state(path=self.state_path)
                 break
                 
-            elif user_input in ['y', 'o', '']:
+            elif user_input in ['y', 'o', '', 'ls', 'le']:
                 is_opt = (user_input == 'o')
+                loop_marker = None
+                if user_input == 'ls':
+                    loop_marker = 'start'
+                elif user_input == 'le':
+                    loop_marker = 'end'
                 recorder.record_step(
                     current_url=action_data['url'],
                     action_type=action_data['action_type'],
                     target=target_sel,
-                    input_value=None,
+                    input_value=input_value,
                     description=analysis.description,
                     is_optional=is_opt,
-                    fingerprint_dict=fp
+                    fingerprint_dict=fp,
+                    loop_marker=loop_marker,
+                    loop_name="main_loop" if loop_marker else None,
                 )
                 
-                logger.info("✅ 步骤已录制！正在代您执行真实的点击，让页面继续流转...")
-                try:
-                    # 开启白名单，绕过我们的拦截器代点，然后关闭白名单
-                    await page.evaluate("window._isAutomated = true;")
-                    await page.locator(exact_sel).first.click(timeout=3000)
-                    await page.evaluate("window._isAutomated = false;")
-                except Exception as e:
-                    # 页面如果因点击发生了导航，上面的设 false 可能会报错，这是正常现象，直接忽略
-                    logger.debug(f"释放点击动作后续状态变更: {e}")
+                if action_data['action_type'] == 'click' and exact_sel:
+                    logger.info("✅ 步骤已录制！正在代您执行真实的点击，让页面继续流转...")
+                    try:
+                        # 开启白名单，绕过我们的拦截器代点，然后关闭白名单
+                        await page.evaluate("window._isAutomated = true;")
+                        await page.locator(exact_sel).first.click(timeout=3000)
+                        await page.evaluate("window._isAutomated = false;")
+                    except Exception as e:
+                        # 页面如果因点击发生了导航，上面的设 false 可能会报错，这是正常现象，直接忽略
+                        logger.debug(f"释放点击动作后续状态变更: {e}")
+                else:
+                    logger.info("✅ 输入步骤已录制，页面已是用户真实输入后的状态，无需代点。")
             else:
                 logger.info("🚫 已舍弃该操作，该点击不会生效，请重新选择目标。")
 

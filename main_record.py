@@ -2,10 +2,20 @@ import asyncio
 import os
 from hexaflow.core.engine import HexaEngine
 from hexaflow.agents.react_agent import ReActAgent
+from hexaflow.browser.cdp_runtime import CDPConfig
 
 async def main():
     engine = HexaEngine(headless=False)
-    await engine.start()
+    use_cdp = os.getenv("USE_CDP", "1") == "1"
+    cdp_start_url = os.getenv("CDP_START_URL", "https://www.okx.com/web3")
+    await engine.start(
+        use_cdp=use_cdp,
+        cdp_config=CDPConfig(
+        user_data_dir="/Users/kenshinnb/pw-profiles/okx-chrome",
+        profile_directory="Default",
+        ) if use_cdp else None,
+        cdp_start_url=cdp_start_url
+    )
     
     agent = ReActAgent(
         api_key= os.getenv("OPENAI_API_KEY"),

@@ -2,6 +2,7 @@ import asyncio
 import os
 from hexaflow.agents.react_agent import ReActAgent
 from hexaflow.core.engine import HexaEngine
+from hexaflow.browser.cdp_runtime import CDPConfig
 
 async def main():
     # 1. 选择模型
@@ -19,11 +20,20 @@ async def main():
     
     engine = HexaEngine(headless=False)
     task_spec_path = "memory/workspace/task_specs/okx_web3_demo.json"
+    use_cdp = os.getenv("USE_CDP", "1") == "1"
+    cdp_start_url = os.getenv("CDP_START_URL", "https://www.okx.com/web3")
 
     # 2. 启动引擎并按 DSL 执行
-    await engine.start()
+    await engine.start(
+        use_cdp=use_cdp,
+        cdp_config=CDPConfig(
+        user_data_dir="/Users/kenshinnb/pw-profiles/okx-chrome",
+        profile_directory="Default",
+        ) if use_cdp else None,
+        cdp_start_url=cdp_start_url
+    )
     try:
-        await engine.run_task_from_spec(task_spec_path, agent=agent2)
+        await engine.run_task_from_spec(task_spec_path, agent=agent1)
         
         input("\n执行完毕，按回车键退出...")
     finally:
