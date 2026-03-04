@@ -1,0 +1,80 @@
+{
+  "task_name": "Task_20260303_183600",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "The current page is about:blank with no elements. To achieve the user's goal, the first step is to navigate to the OKX Web3 homepage at the specified URL.",
+      "pre_check": {
+        "expected_url_contains": "about:blank",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "The user wants to click the left top '行情' link after loading the OKX Web3 homepage. On the current screen, the navigation element with text '行情' appears as hexa-2 (and also hexa-51). The left‑top link is likely hexa-2, so we click it.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "The user wants to click the 'OKX Boost' section after opening the market page. On the current screen, the element with ID hexa-19 has text 'OKX Boost', which matches the required target. Therefore, the next step is to click this element.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"OKX Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"OKX Boost\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "The goal is to open the first token's detail page after navigating to OKX Boost. The current page lists tokens, with the first token link being ZAMA (ID hexa-34). Clicking this will open its detail page, after which the next step will be to click '连接钱包'.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"ZAMA\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"ZAMA\"",
+        "input_value": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "The user wants to click '连接钱包' after navigating to the token detail page. The current screen lists a button with text '连接钱包' at ID hexa-159. Clicking this button fulfills the next step of the goal.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x6907a5986c4950bdaf2f81828ec0737ce787519f",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null
+      },
+      "is_optional": false
+    }
+  ]
+}

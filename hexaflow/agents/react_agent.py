@@ -17,6 +17,10 @@ class NextAction(BaseModel):
     target: Optional[str] = Field(None, description="If action is 'navigate', put URL here. If 'click' or 'type', put the exact ID bracket here, e.g., '[hexa-id=\"hexa-5\"]'")
     input_value: Optional[str] = Field(None, description="Text to input if action_type is 'type'.")
 
+class AnalyzedAction(BaseModel):
+    thought: str = Field(description="Analyze why the user clicked this element to achieve the goal.")
+    description: str = Field(description="A concise description of the step, e.g., '点击登录按钮' or '点击搜索框'")
+
 # ==========================================
 # 2. 动态大脑核心逻辑
 # ==========================================
@@ -66,3 +70,35 @@ class ReActAgent:
         except Exception as e:
             logger.error(f"❌ [Agent 决策失败]: {e}")
             raise
+
+    async def analyze_manual_action(self, goal: str, action_data: dict) -> AnalyzedAction:
+        """AI 旁观者：分析用户的物理点击动作"""
+        fp = action_data.get('fingerprint', {})
+        prompt = f"""
+        USER GOAL: {goal}
+        
+        The user just manually clicked an element with the following properties:
+        - Tag: {fp.get('tag_name')}
+        - Text: {fp.get('text')}
+        - Aria-label: {fp.get('aria_label')}
+        - Classes: {fp.get('classes')}
+        
+        Analyze why the user made this action to achieve the goal, and provide a short step description in Chinese.
+        """
+        
+        call_kwargs = {
+            "model": self.model_name,
+            "response_model": AnalyzedAction,
+            "messages": [
+                {"role": "system", "content": "You are a helpful RPA action analyzer."},
+                {"role": "user", "content": prompt}
+            ]
+        }
+        
+        try:
+            logger.info("🧠 [Agent] 正在分析用户的操作意图...")
+            analysis = await self.client.chat.completions.create(**call_kwargs)
+            return analysis
+        except Exception as e:
+            logger.error(f"❌ AI 分析失败: {e}")
+            return AnalyzedAction(thought="Failed to analyze.", description="执行点击操作")

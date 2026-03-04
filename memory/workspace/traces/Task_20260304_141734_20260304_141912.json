@@ -1,0 +1,109 @@
+{
+  "task_name": "Task_20260304_141734",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "当前页面是about:blank，需要先导航到OKX的Web3首页，才能执行后续操作。",
+      "pre_check": {
+        "expected_url_contains": "about:blank",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "The user goal is to click on '行情' in the top-left corner. Looking at the current screen, there is an element with ID 'hexa-2' that has the text '行情'. This matches the requirement to click on '行情' first. After this, we will proceed to the next steps as per the user's instructions.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "行情",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left current-active-nav nav-cefi-market"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "The user's goal is to click on 'OKX Boost' after clicking '行情'. The current screen shows an element labeled 'OKX Boost' with hexa-id 'hexa-19'. According to the instructions, I should click on this element to proceed to the next step.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"OKX Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"OKX Boost\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "OKX Boost",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex dex-popup-var dex-popup dex-tooltip dex-tooltip-var dex-tooltip-neutral PyEdke__dex"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "根据用户目标，我需要点击第一个代币进入详细页面。当前页面显示了多个代币选项，其中第一个是 ZAMA，其对应的 hexa-id 是 'hexa-34'。点击该链接将进入 ZAMA 的详细页面，符合下一步操作要求。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"ZAMA\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"ZAMA\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "ZAMA",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "The user's goal is to click '连接钱包' after navigating to the token detail page. The current screen shows the '连接钱包' button with hexa-id 'hexa-154', which matches the required action. Since the page has loaded and the element is visible, clicking this button will fulfill the next step.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x6907a5986c4950bdaf2f81828ec0737ce787519f",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "连接钱包",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "wallet-pc-connect-button connect-wallet-button"
+        }
+      },
+      "is_optional": false
+    }
+  ]
+}

@@ -109,3 +109,62 @@ class DomParser:
         except Exception as e:
             logger.debug(f"翻译选择器失败, 退回原值: {e}")
             return target
+
+    @staticmethod
+    async def get_element_fingerprint(page: Page, target: str) -> dict:
+        """根据选择器提取元素的多维特征指纹"""
+        if not target or target == "body":
+            return {}
+            
+        js_code = """
+        (el) => {
+            if (!el) return null;
+            return {
+                tag_name: el.tagName.toLowerCase(),
+                text: (el.innerText || el.value || "").trim().substring(0, 50).replace(/\\n/g, ' '),
+                aria_label: el.getAttribute('aria-label') || "",
+                placeholder: el.placeholder || "",
+                classes: Array.from(el.classList).join(' ')
+            };
+        }
+        """
+        try:
+            locator = page.locator(target).first
+            # 等待元素可见，确保能抓到属性
+            await locator.wait_for(state="attached", timeout=3000)
+            fp = await locator.evaluate(js_code)
+            return fp if fp else {}
+        except Exception as e:
+            logger.debug(f"提取元素指纹失败: {target}, 错误: {e}")
+            return {}
+
+    @staticmethod
+    async def fuzzy_find_by_fingerprint(page: Page, fingerprint: dict) -> str:
+        """根据指纹反向推导可用的选择器（第一层自愈）"""
+        if not fingerprint:
+            return None
+            
+        text = fingerprint.get("text")
+        tag = fingerprint.get("tag_name")
+        aria_label = fingerprint.get("aria_label")
+        placeholder = fingerprint.get("placeholder")
+
+        # 策略 1: 文本 + 标签 强匹配
+        if text and tag:
+            # 过滤掉太短的文本，避免误杀
+            if len(text) > 1:
+                return f"{tag}:has-text('{text}')"
+        
+        # 策略 2: Aria-label 匹配
+        if aria_label:
+            return f"{tag}[aria-label='{aria_label}']" if tag else f"[aria-label='{aria_label}']"
+            
+        # 策略 3: Placeholder 匹配
+        if placeholder:
+            return f"{tag}[placeholder='{placeholder}']" if tag else f"[placeholder='{placeholder}']"
+            
+        # 策略 4: 仅靠可见文本兜底
+        if text:
+            return f"text='{text}'"
+
+        return None

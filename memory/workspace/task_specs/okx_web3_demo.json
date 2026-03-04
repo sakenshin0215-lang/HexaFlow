@@ -1,0 +1,25 @@
+{
+  "task_name": "okx_web3_connect_wallet_demo",
+  "goal": "打开 OKX Web3 页面，进入行情, 然后点击OKX Boost(注意一定是OKX Boost不是Boost) 的第一个个代币详情，最后点击连接钱包",
+  "notes": [
+    "如果页面是 SPA 或跨域跳转，优先等待关键 DOM 出现后再点击",
+    "遇到弹窗优先尝试关闭、跳过或确认",
+    "尽量不要重复点击同一元素"
+  ],
+  "start_url": "https://www.okx.com/web3",
+  "manual_review": false,
+  "max_steps": 20,
+  "allowed_domains": [
+    "okx.com",
+    "web3.okx.com"
+  ],
+  "blocked_keywords": [
+    "下载APP",
+    "立即购买",
+    "订阅"
+  ],
+  "failure_policy": {
+    "mode": "stop",
+    "max_consecutive_failures": 4
+  }
+}

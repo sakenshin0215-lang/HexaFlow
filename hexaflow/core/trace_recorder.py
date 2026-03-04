@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from pydantic import BaseModel
 # 借用我们之前在 planner.py 里定义的严谨结构
-from hexaflow.agents.planner import WorkflowBlueprint, FlowStep, PreCheck, StepAction
+from hexaflow.agents.planner import WorkflowBlueprint, FlowStep, PreCheck, StepAction, ElementFingerprint
 
 logger = logging.getLogger("TraceRecorder")
 
@@ -17,33 +17,31 @@ class TraceRecorder:
         
         os.makedirs(self.workspace_dir, exist_ok=True)
 
-    def record_step(self, current_url: str, action_type: str, target: str, input_value: str = None, description: str = "", is_optional: bool = False):
+    def record_step(self, current_url: str, action_type: str, target: str, input_value: str = None, description: str = "", is_optional: bool = False, fingerprint_dict: dict = None):
         """
-        录制一个成功的步骤
+        录制一个成功的步骤，增加 fingerprint_dict 参数
         """
         url_core = current_url.split("?")[0].replace("https://", "").replace("http://", "")
         step_id = f"step_{self.step_counter}_{action_type}"
         
-        if action_type == "navigate":
-            dom_selector = "body"
-        else:
-            dom_selector = target if target else "body"
+        dom_selector = "body" if action_type == "navigate" else (target if target else "body")
             
-        # 组装前置校验 (PreCheck)
         pre_check = PreCheck(
             expected_url_contains=url_core,
             expected_dom_selector=dom_selector,
             timeout_ms=5000
         )
         
-        # 组装动作 (StepAction)
+        # 转换字典为 Pydantic 对象
+        fp_obj = ElementFingerprint(**fingerprint_dict) if fingerprint_dict else None
+        
         step_action = StepAction(
             action_type=action_type,
             target=target,
-            input_value=input_value
+            input_value=input_value,
+            fingerprint=fp_obj
         )
         
-        # 组装完整节点
         flow_step = FlowStep(
             step_id=step_id,
             description=description or f"执行 {action_type} 操作",

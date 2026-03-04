@@ -1,0 +1,93 @@
+{
+  "task_name": "Task_20260304_142638",
+  "steps": [
+    {
+      "step_id": "step_1_click",
+      "description": "用户目标是进入行情页面，然后点击OKX Boost的第一个代币详情，最后连接钱包。当前页面是OKX Web3首页，需要先点击“行情”链接进入行情页面。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "行情",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left current-active-nav nav-cefi-market"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "用户目标是进入 OKX Boost 的第一个代币详情。当前页面已经显示了 OKX Boost 的入口，位于 [ID: hexa-19] 'OKX Boost'。点击它将进入 Boost 页面，之后可以找到第一个代币并点击其详情。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"OKX Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"OKX Boost\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "OKX Boost",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex dex-popup-var dex-popup dex-tooltip dex-tooltip-var dex-tooltip-neutral PyEdke__dex"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "用户目标是进入 OKX Boost 的第一个代币详情页面，然后点击连接钱包。当前页面显示了多个代币选项，第一个代币是 'ZAMA'，其链接为 '/zh-hans/token/bsc/0x6907a5986c4950bdaf2f81828ec0737ce787519f'。点击这个链接可以进入第一个代币的详情页。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"ZAMA\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"ZAMA\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "ZAMA",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "用户目标是点击连接钱包按钮。当前页面已经加载了ZAMA代币详情，且在屏幕上有明确的'连接钱包'按钮（[ID: hexa-13]）。根据任务流程，下一步应是点击此按钮以完成连接钱包的操作。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x6907a5986c4950bdaf2f81828ec0737ce787519f",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "连接钱包",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "wallet-pc-connect-button connect-wallet-button"
+        }
+      },
+      "is_optional": false
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "task_name": "ManualTask_20260303_195745",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://web3.okx.com/",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://web3.okx.com/",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "点击连接钱包按钮",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "连接钱包",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "wallet-pc-connect-button connect-wallet-button"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "点击立即安装按钮",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"立即安装\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"立即安装\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "立即安装",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "btn-content"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "点击“不了，谢谢”按钮以关闭弹窗",
+      "pre_check": {
+        "expected_url_contains": "chromewebstore.google.com/detail/okx-wallet/mcohilncbfahbmgdjkbpemcciiolgcge",
+        "expected_dom_selector": "text=\"不了，谢谢\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"不了，谢谢\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "不了，谢谢",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "mUIrbf-vQzf8d"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "点击“探索”按钮以进入行情页面",
+      "pre_check": {
+        "expected_url_contains": "chromewebstore.google.com/detail/okx-wallet/mcohilncbfahbmgdjkbpemcciiolgcge",
+        "expected_dom_selector": "text=\"探索\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"探索\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "button",
+          "text": "探索",
+          "aria_label": "探索",
+          "placeholder": "",
+          "classes": "LXTxRc-AznF2e LXTxRc-AznF2e-OWXEXe-RmniWd-NBtyUd DECryd"
+        }
+      },
+      "is_optional": false
+    }
+  ]
+}

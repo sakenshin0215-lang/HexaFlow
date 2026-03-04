@@ -1,0 +1,219 @@
+{
+  "task_name": "ManualTask_20260303_192606",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://web3.okx.com/",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://web3.okx.com/",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "点击兑换按钮以查看或操作实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"兑换\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"兑换\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "兑换",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left nav-swap"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "点击跨链桥链接查看相关实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap",
+        "expected_dom_selector": "text=\"跨链桥\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"跨链桥\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "跨链桥",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-powerLink-a11y dex-powerLink HPKjZ3__dex"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "点击USDT标签以查看相关实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "text=\"USDT\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"USDT\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "USDT",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "flex align-center"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_5_click",
+      "description": "点击查看实时行情按钮",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "button",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "button",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "button",
+          "text": "",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-plain-button flex cursor-pointer NlqRlt__dex"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_6_click",
+      "description": "点击以太坊行情卡片以查看实时数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "text=\"Ethereum\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"Ethereum\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "Ethereum",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "flex items-center mt-4"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_7_click",
+      "description": "点击BTCB查看实时行情数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "text=\"BTCB\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"BTCB\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "BTCB",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "flex align-center"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_8_click",
+      "description": "点击USDT行情卡片以查看相关实时数据",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "text=\"USDT\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"USDT\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "USDT",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "oWaXsS__dex"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_9_click",
+      "description": "点击连接钱包按钮以绑定个人钱包并查看相关资产的实时行情",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "连接钱包",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "btn-content"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_10_click",
+      "description": "点击关闭按钮以关闭弹窗",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/dex-swap/bridge",
+        "expected_dom_selector": "#okdDialogCloseBtn",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "#okdDialogCloseBtn",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "i",
+          "text": "",
+          "aria_label": "关闭",
+          "placeholder": "",
+          "classes": "wallet-icon icon iconfont wallet-okds-close wallet-dialog-c-btn wallet-a11y-button"
+        }
+      },
+      "is_optional": false
+    }
+  ]
+}

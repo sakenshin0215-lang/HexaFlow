@@ -1,0 +1,93 @@
+{
+  "task_name": "Task_20260304_143251",
+  "steps": [
+    {
+      "step_id": "step_1_click",
+      "description": "用户目标是进入行情页面，首先需要点击'行情'链接。在当前屏幕中，[ID: hexa-2] 和 [ID: hexa-51] 都是'行情'的链接，选择其中一个即可。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "text=\"行情\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"行情\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "行情",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left current-active-nav nav-cefi-market"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "The user goal is to click on the first token detail under 'OKX Boost'. The current screen shows the 'OKX Boost' section with multiple token links. The first token listed is 'ZAMA', which should be clicked to proceed with the task.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "text=\"ZAMA\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"ZAMA\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "ZAMA",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "ellipsis"
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "用户目标是进入 OKX Boost 的第一个代币详情并点击连接钱包。当前页面是 ZAMA 的详情页，没有直接显示 OKX Boost 的内容。需要点击 'Boost' 链接进入 OKX Boost 页面，然后找到第一个代币详情并点击连接钱包。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x6907a5986c4950bdaf2f81828ec0737ce787519f",
+        "expected_dom_selector": "text=\"Boost\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"Boost\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "span",
+          "text": "Boost",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": ""
+        }
+      },
+      "is_optional": false
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "The user's goal is to click on the '连接钱包' button after viewing the first token details under OKX Boost. The current screen shows the OKX Boost page with multiple token options. The first token listed is 'RateX X Launch'. To proceed, I need to click on the '连接钱包' button, which is located near the top right of the screen and has the hexa-id '[hexa-13]'. This aligns with the user's final step in the task.",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/boost/x-launch",
+        "expected_dom_selector": "text=\"连接钱包\"",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "text=\"连接钱包\"",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "div",
+          "text": "连接钱包",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "wallet-pc-connect-button connect-wallet-button"
+        }
+      },
+      "is_optional": false
+    }
+  ]
+}
