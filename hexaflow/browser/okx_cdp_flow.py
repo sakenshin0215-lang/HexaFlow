@@ -8,12 +8,12 @@ OKX_WEB3_URL = "https://www.okx.com/web3"
 
 def _click_connect_wallet(page: Page) -> bool:
     try:
-        page.get_by_role("button", name="连接钱包").first.click(timeout=5000)
+        page.get_by_role("button", name="连接钱包").first.click(timeout=5000, force=True)
         return True
     except Exception:
         pass
     try:
-        page.get_by_role("button", name="Connect Wallet").first.click(timeout=5000)
+        page.get_by_role("button", name="Connect Wallet").first.click(timeout=5000, force=True)
         return True
     except Exception:
         pass
@@ -21,18 +21,18 @@ def _click_connect_wallet(page: Page) -> bool:
     selectors = ["text=连接钱包", "text=Connect Wallet", "text=连接", "text=Connect"]
     for sel in selectors:
         try:
-            page.locator(sel).first.click(timeout=3000)
+            page.locator(sel).first.click(timeout=3000, force=True)
             return True
         except Exception:
             continue
 
     try:
-        page.get_by_role("button").filter(has_text="连接").first.click(timeout=5000)
+        page.get_by_role("button").filter(has_text="连接").first.click(timeout=5000, force=True)
         return True
     except Exception:
         pass
     try:
-        page.get_by_role("button").filter(has_text="Connect").first.click(timeout=5000)
+        page.get_by_role("button").filter(has_text="Connect").first.click(timeout=5000, force=True)
         return True
     except Exception:
         pass
@@ -42,7 +42,7 @@ def _click_connect_wallet(page: Page) -> bool:
 def _close_common_popups(page: Page):
     for text in ["Accept", "同意", "我同意", "知道了", "Got it", "关闭", "Close"]:
         try:
-            page.get_by_role("button", name=text).first.click(timeout=1000)
+            page.get_by_role("button", name=text).first.click(timeout=1000, force=True)
             return
         except Exception:
             continue
@@ -51,17 +51,56 @@ def _close_common_popups(page: Page):
 def _click_by_candidates(page: Page, candidates: list[str], timeout_ms: int = 5000) -> bool:
     for sel in candidates:
         try:
+            # 1. 根据选择器特征，获取 Locator 对象
             if sel.startswith("role=button:"):
                 name = sel.split(":", 1)[1]
-                page.get_by_role("button", name=name).first.click(timeout=timeout_ms)
+                locator = page.get_by_role("button", name=name).first
             elif sel.startswith("text="):
-                page.get_by_text(sel.split("=", 1)[1], exact=False).first.click(timeout=timeout_ms)
+                locator = page.get_by_text(sel.split("=", 1)[1], exact=False).first
             else:
-                page.locator(sel).first.click(timeout=timeout_ms)
-            page.wait_for_timeout(900)
-            return True
-        except Exception:
+                locator = page.locator(sel).first
+            
+            # 如果元素在 DOM 中根本不存在，直接跳过，试下一个 candidate
+            if not locator.is_visible(timeout=1000):
+                continue
+
+            # ==========================================
+            # 🚀 优化核心：三段式降级点击策略
+            # ==========================================
+            
+            try:
+                # 策略 1: 拟人化普通点击 (最推荐，但不一定能成功)
+                # timeout 设短一点，不行马上降级
+                locator.click(timeout=2000)
+                page.wait_for_timeout(900)
+                return True
+            except Exception as e1:
+                print(f"⚠️ 常规点击失败，尝试强制穿透: {sel} -> {str(e1).splitlines()[0]}")
+                
+                try:
+                    # 策略 2: 暴力穿透点击 (force=True)
+                    # 绕过可见性和遮挡检查，无视上层的透明遮罩，硬点元素的坐标！
+                    locator.click(force=True, timeout=2000)
+                    page.wait_for_timeout(900)
+                    return True
+                except Exception as e2:
+                    print(f"⚠️ 强制穿透失败，尝试注入 JS 触发: {sel} -> {str(e2).splitlines()[0]}")
+                    
+                    try:
+                        # 策略 3: JS 原生事件触发 (核武器)
+                        # 完全不模拟鼠标坐标，直接在浏览器底层调用 DOM 的 .click() 方法
+                        # 专治各种被上层 div 拦截、或者面积为 0 的奇葩元素
+                        locator.evaluate("el => el.click()", timeout=2000)
+                        page.wait_for_timeout(900)
+                        return True
+                    except Exception as e3:
+                        print(f"❌ JS 点击也失败了: {sel}")
+                        continue # 三种办法都失败，才宣告这个 selector 彻底没救，试下一个
+
+        except Exception as e:
+            # 捕获查找 locator 过程中的其他异常
             continue
+
     return False
 
 

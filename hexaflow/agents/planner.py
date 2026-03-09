@@ -15,7 +15,7 @@ class ElementFingerprint(BaseModel):
     classes: Optional[str] = Field(None)
 
 class StepAction(BaseModel):
-    action_type: str = Field(description="[navigate, click, type, wait_for_timeout, scroll]")
+    action_type: str = Field(description="[navigate, click, type, click_type_enter, press_enter, refresh, wait_for_timeout, scroll, ensure_quote_token]")
     target: Optional[str] = Field(None, description="Stable target locator")
     input_value: Optional[str] = Field(None)
     fingerprint: Optional[ElementFingerprint] = Field(None, description="元素的多维特征指纹，用于回放时模糊定位")

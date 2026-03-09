@@ -2,7 +2,7 @@ import asyncio
 import os
 from hexaflow.core.engine import HexaEngine
 from hexaflow.browser.cdp_runtime import CDPConfig
-from hexaflow.agents.react_agent import ReActAgent
+from hexaflow.agents.heal_agent import AIHealAgent
 
 async def main():
     
@@ -10,9 +10,10 @@ async def main():
     
     engine = HexaEngine(headless=False) 
     enable_ai_repair = os.getenv("ENABLE_REPLAY_AI_REPAIR", "1") == "1"
+    ai_repair_only = os.getenv("AI_REPAIR_ONLY", "0") == "1"
     repair_agent = None
     if enable_ai_repair:
-        repair_agent = ReActAgent(
+        repair_agent = AIHealAgent(
             api_key=os.getenv("REPLAY_REPAIR_API_KEY", "ollama"),
             base_url=os.getenv("REPLAY_REPAIR_BASE_URL", "http://localhost:11434/v1"),
             model_name=os.getenv("REPLAY_REPAIR_MODEL", "qwen3-vl:8b-instruct")
@@ -34,10 +35,15 @@ async def main():
             trace_path=trace_file,
             replay_repair_agent=repair_agent,
             repair_context_window=int(os.getenv("REPAIR_CONTEXT_WINDOW", "5")),
+            disable_fallback_recovery=ai_repair_only,
         )
         if report_paths:
             print(f"\n📄 报告(JSON): {report_paths['json_path']}")
             print(f"📝 报告(MD):   {report_paths['md_path']}")
+            heal_paths = report_paths.get("heal_log")
+            if heal_paths:
+                print(f"🩹 修复清单(JSON): {heal_paths.get('json_path')}")
+                print(f"🩹 修复清单(MD):   {heal_paths.get('md_path')}")
         
         input("\n执行完毕，按回车键退出...")
     finally:

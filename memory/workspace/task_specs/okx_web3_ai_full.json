@@ -1,0 +1,37 @@
+{
+  "task_name": "OKX_Web3_AI_FullFlow",
+  "goal": "进入 OKX Web3(web3.okx.com)，进入 DEX / token 市场页面先进入行情页面，点击 OKX Boost 榜单(注意不是Boost)。在榜单中找到当前币价最高的代币并进入详情页，确认链是 BSC。阅读右侧风险提示后连接钱包（选择 OKX Wallet）。确认页面顶部出现账户信息，且交易面板从“连接钱包”切换为可输入状态。任务完成.",
+  "notes": [
+    "优先使用页面中可见按钮和稳定 selector。",
+    "输入金额后需要确认时，使用 click_type_enter 或 press_enter。",
+    "如果页面卡住或出现遮挡，优先 refresh 再继续。",
+    "如遇登录/签名/验证码则请求人工接管。",
+    "优先使用文本与结构定位，不要依赖坐标点击（除非无法定位）。"
+  ],
+  "start_url": "https://www.okx.com/web3",
+  "manual_review": false,
+  "max_steps": 50,
+  "allowed_domains": [
+    "okx.com",
+    "web3.okx.com"
+  ],
+  "blocked_keywords": [],
+  "completion_logic": "any",
+  "completion_checks": [
+    {
+      "check_type": "action_target_contains",
+      "action_type": "click",
+      "value": "请输入数量"
+    }
+  ],
+  "failure_policy": {
+    "mode": "continue",
+    "max_consecutive_failures": 6
+  },
+  "loop_policy": {
+    "enabled": false,
+    "loop_name": "main_loop",
+    "iterations": 1,
+    "max_iteration_retries": 30
+  }
+}

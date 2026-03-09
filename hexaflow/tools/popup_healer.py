@@ -2,6 +2,8 @@ import os
 import json
 import asyncio
 import logging
+import base64
+import mimetypes
 from difflib import SequenceMatcher
 from typing import Optional
 from bs4 import BeautifulSoup, NavigableString
@@ -83,6 +85,30 @@ class PopupCache:
             return self.experiences[best_match].get("selector")
         return None
 
+    def find_match_with_relaxed_threshold(
+        self, new_fingerprint: str, primary_threshold: float = 0.85, relaxed_threshold: float = 0.72
+    ) -> Optional[str]:
+        """
+        先严格匹配，再宽松匹配，尽量复用历史弹窗方案，减少 LLM 调用。
+        """
+        strict = self.find_match(new_fingerprint, threshold=primary_threshold)
+        if strict:
+            return strict
+
+        if not new_fingerprint:
+            return None
+        best_match, highest_score = None, 0.0
+        for cached_fp, data in self.experiences.items():
+            score = SequenceMatcher(None, new_fingerprint, cached_fp).ratio()
+            if score > highest_score:
+                highest_score = score
+                best_match = cached_fp
+        if best_match and highest_score >= relaxed_threshold:
+            logger.info(f"⚠️ [Cache] 宽松命中历史弹窗经验 (相似度: {highest_score:.2f})")
+            return self.experiences[best_match].get("selector")
+        logger.info(f"ℹ️ [Cache] 未命中弹窗经验 (最佳相似度: {highest_score:.2f})")
+        return None
+
     def save_experience(self, fingerprint: str, selector: str):
         self.experiences[fingerprint] = {"selector": selector}
         self._save()
@@ -96,7 +122,7 @@ class PopupCache:
 # 3. 弹窗自愈专家 (Healer Agent)
 # ==========================================
 class PopupHealer:
-    def __init__(self, model_name: str = os.getenv("POPUP_HEALER_MODEL"), api_key: str = os.getenv("OPENAI_API_KEY"), base_url: str = os.getenv("OPENAI_BASE_URL")):
+    def __init__(self, model_name: str = "meta-llama/llama-4-scout-17b-16e-instruct", api_key: str = os.getenv("POPUP_HEALER_APIKEY"), base_url: str = os.getenv("POPUP_HEALER_BASEURL")):
         self.cache = PopupCache()
         self.model_name = model_name
         raw_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -112,6 +138,23 @@ class PopupHealer:
         3. Prefer Playwright's native text selector: `text="我知道了"` or `text="Skip"`.
         4. If using XPath, you MUST use `.` to include nested text, e.g., `xpath=//button[contains(., 'Close')]`.
         """
+
+    @staticmethod
+    def _bytes_to_data_url(binary: bytes, mime: str = "image/png") -> str:
+        if not binary:
+            return ""
+        b64 = base64.b64encode(binary).decode("utf-8")
+        return f"data:{mime};base64,{b64}"
+
+    async def _capture_popup_viewport_data_url(self, page: Page) -> str:
+        """
+        仅截取当前视口，作为弹窗视觉上下文传给 LLM。
+        """
+        try:
+            img_bytes = await page.screenshot(full_page=False, scale="css", type="png")
+            return self._bytes_to_data_url(img_bytes, mime="image/png")
+        except Exception:
+            return ""
 
     async def _observe_clean_popups(self, page: Page) -> str:
         """注入 JS，连拍提取脱水版的弹窗 HTML"""
@@ -167,16 +210,24 @@ class PopupHealer:
             await asyncio.sleep(0.3)
         return ""
 
-    async def _ask_llm(self, popup_html: str) -> str:
-        prompt = f"Popup HTML:\n```html\n{popup_html}\n```\nFind the selector to close this popup."
+    async def _ask_llm(self, popup_html: str, screenshot_data_url: str = "") -> str:
+        prompt = (
+            "Analyze this popup and return a selector to close/skip it.\n"
+            "If HTML and screenshot conflict, trust screenshot visibility first.\n"
+            f"Popup HTML:\n```html\n{popup_html}\n```"
+        )
         logger.info("🧠 [Healer] 遇到未知弹窗，正在呼叫大模型思考破解方案...")
         
+        user_content = [{"type": "text", "text": prompt}]
+        if screenshot_data_url:
+            user_content.append({"type": "image_url", "image_url": {"url": screenshot_data_url}})
+
         call_kwargs = {
             "model": self.model_name,
             "response_model": PopupSolution,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": user_content},
             ]
         }
         
@@ -188,6 +239,80 @@ class PopupHealer:
             logger.error(f"❌ [Healer 决策失败]: {e}")
             return ""
 
+    async def _click_selector_robust(self, page: Page, selector: str) -> bool:
+        if not selector:
+            return False
+        loc = page.locator(selector).first
+        try:
+            await loc.wait_for(state="visible", timeout=2500)
+        except Exception:
+            return False
+
+        # 1) normal click
+        try:
+            await loc.click(timeout=2200)
+            return True
+        except Exception:
+            pass
+
+        # 2) force click (for mask-intercepted popups)
+        try:
+            await loc.click(timeout=2200, force=True)
+            return True
+        except Exception:
+            pass
+
+        # 3) center coordinate click
+        try:
+            box = await loc.bounding_box()
+            if box:
+                x = box["x"] + box["width"] / 2
+                y = box["y"] + box["height"] / 2
+                await page.mouse.click(x, y, delay=50)
+                return True
+        except Exception:
+            pass
+
+        # 4) JS click fallback
+        try:
+            await loc.evaluate(
+                """(el) => {
+                    el.click();
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                }"""
+            )
+            return True
+        except Exception:
+            return False
+
+    async def _fallback_close_actions(self, page: Page) -> bool:
+        fallback_selectors = [
+            "button[aria-label='Close']",
+            "button[aria-label='关闭']",
+            "[role='button'][aria-label='Close']",
+            "[role='button'][aria-label='关闭']",
+            "text='关闭'",
+            "text='跳过'",
+            "text='知道了'",
+            "text='我知道了'",
+            "text='稍后'",
+            "text='以后再说'",
+        ]
+        for sel in fallback_selectors:
+            if await self._click_selector_robust(page, sel):
+                return True
+
+        # common modal close hotspot (top-right in dialog)
+        try:
+            size = page.viewport_size or {}
+            w, h = int(size.get("width", 0)), int(size.get("height", 0))
+            if w > 120 and h > 120:
+                await page.mouse.click(int(w * 0.92), int(h * 0.12), delay=40)
+                return True
+        except Exception:
+            pass
+        return False
+
     async def heal(self, page: Page) -> bool:
         """核心自愈入口：扫描弹窗 -> 匹配缓存/呼叫AI -> 关闭 -> 验证"""
         popup_html = await self._observe_clean_popups(page)
@@ -196,12 +321,21 @@ class PopupHealer:
             return False
             
         fingerprint = self.cache.extract_skeleton(popup_html)
-        solution_selector = self.cache.find_match(fingerprint)
+        if not fingerprint:
+            logger.info("ℹ️ [Cache] 弹窗指纹为空，跳过缓存匹配。")
+        else:
+            logger.info(f"🧩 [Cache] 开始匹配弹窗经验库，指纹长度={len(fingerprint)}")
+        solution_selector = self.cache.find_match_with_relaxed_threshold(fingerprint)
         used_cache = True
         
         if not solution_selector:
             used_cache = False
-            solution_selector = await self._ask_llm(popup_html)
+            screenshot_data_url = await self._capture_popup_viewport_data_url(page)
+            if screenshot_data_url:
+                logger.info("🖼️ [Healer] 已附带视口截图进行弹窗视觉识别")
+            solution_selector = await self._ask_llm(popup_html, screenshot_data_url=screenshot_data_url)
+        else:
+            logger.info("🗂️ [Cache] 本次将优先使用缓存中的弹窗关闭方案")
             
         if not solution_selector:
             return False
@@ -214,9 +348,14 @@ class PopupHealer:
             if sel.startswith("text=") or sel.startswith("has-text="): final_selector = sel
             elif sel.startswith("//") or sel.startswith("(//"): final_selector = f"xpath={sel}"
             else: final_selector = sel
-            
-            await page.locator(final_selector).first.click(timeout=5000)
-            await page.wait_for_timeout(2000)
+
+            clicked = await self._click_selector_robust(page, final_selector)
+            if not clicked:
+                logger.info("ℹ️ [Healer] 主选择器点击失败，尝试通用关闭策略...")
+                clicked = await self._fallback_close_actions(page)
+            if not clicked:
+                raise Exception(f"所有关闭动作都失败: {final_selector}")
+            await page.wait_for_timeout(500)
             
             # 闭环验证
             verify_html = await self._observe_clean_popups(page)

@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from hexaflow.agents.react_agent import ReActAgent
+from hexaflow.agents.heal_agent import AIHealAgent
 from hexaflow.browser.cdp_runtime import CDPConfig
 from hexaflow.core.engine import HexaEngine
 
@@ -12,13 +12,14 @@ async def main():
 
     use_cdp = os.getenv("USE_CDP", "1") == "1"
     cdp_start_url = os.getenv("CDP_START_URL", "https://www.okx.com/web3")
-    enable_ai_repair = os.getenv("ENABLE_REPLAY_AI_REPAIR", "1") == "1"
+    enable_ai_repair = "1"
+    ai_repair_only = "1"
     repair_agent = None
     if enable_ai_repair:
-        repair_agent = ReActAgent(
-            api_key=os.getenv("REPLAY_REPAIR_API_KEY", "ollama"),
-            base_url=os.getenv("REPLAY_REPAIR_BASE_URL", "http://localhost:11434/v1"),
-            model_name=os.getenv("REPLAY_REPAIR_MODEL", "qwen3-vl:8b-instruct"),
+        repair_agent = AIHealAgent(
+            api_key="ollama",
+            base_url="http://localhost:11434/v1",
+            model_name="qwen3-vl:8b-instruct",
         )
 
     engine = HexaEngine(headless=False)
@@ -35,9 +36,14 @@ async def main():
             trace_path=trace_file,
             spec_input=task_spec_path,
             replay_repair_agent=repair_agent,
+            disable_fallback_recovery=ai_repair_only,
         )
         print("\n循环任务结果:")
         print(result)
+        heal_paths = result.get("heal_log_paths") if isinstance(result, dict) else None
+        if heal_paths:
+            print(f"\n🩹 修复清单(JSON): {heal_paths.get('json_path')}")
+            print(f"🩹 修复清单(MD):   {heal_paths.get('md_path')}")
         input("\n执行完毕，按回车退出...")
     finally:
         await engine.stop()
@@ -45,4 +51,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

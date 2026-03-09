@@ -19,6 +19,17 @@ class LoopPolicy(BaseModel):
     max_iteration_retries: int = Field(default=30, ge=1, le=100000)
 
 
+class CompletionCheck(BaseModel):
+    check_type: Literal["url_contains", "text_visible", "selector_visible", "action_target_contains"] = Field(
+        description="Completion check type."
+    )
+    value: str = Field(description="Expected text/URL fragment/selector.")
+    action_type: Optional[Literal["navigate", "click", "type", "click_type_enter", "press_enter", "refresh"]] = Field(
+        default=None,
+        description="Optional action type filter, used when check_type=action_target_contains.",
+    )
+
+
 class TaskSpec(BaseModel):
     task_name: str = Field(default="DynamicTask")
     goal: str = Field(description="Primary business goal")
@@ -33,6 +44,14 @@ class TaskSpec(BaseModel):
     blocked_keywords: List[str] = Field(
         default_factory=list,
         description="Action text containing these keywords will be blocked.",
+    )
+    completion_logic: Literal["any", "all"] = Field(
+        default="any",
+        description="any: any completion check passes; all: all checks must pass",
+    )
+    completion_checks: List[CompletionCheck] = Field(
+        default_factory=list,
+        description="Optional deterministic completion checks for dynamic task.",
     )
     failure_policy: FailurePolicy = Field(default_factory=FailurePolicy)
     loop_policy: LoopPolicy = Field(default_factory=LoopPolicy)
