@@ -1,48 +1,20 @@
 import logging
 import json
 import re
-import ast
-import base64
-import mimetypes
 from typing import Optional
-from pydantic import BaseModel, Field
 import instructor
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from hexaflow.agents.schemas import (
+    AnalyzedAction,
+    ClickCoordinateDecision,
+    NextAction,
+    ReplayRepairDecision,
+)
+from hexaflow.tools.helpers import extract_json_object, image_to_data_url
 
 load_dotenv()
 logger = logging.getLogger("ReActAgent")
-
-# ==========================================
-# 1. 动态单步决策 Schema
-# ==========================================
-class NextAction(BaseModel):
-    thought: str = Field(default="", description="Step-by-step reasoning: What is the goal? What is on the screen right now? What should I do next?")
-    action_type: str = Field(description="MUST be one of: [navigate, click, type, click_type_enter, press_enter, refresh, done]")
-    target: Optional[str] = Field(None, description="If action is 'navigate', put URL here. If click/type/click_type_enter, put selector, e.g., '[hexa-id=\"hexa-5\"]'")
-    input_value: Optional[str] = Field(None, description="Text to input if action_type is 'type' or 'click_type_enter'.")
-
-class AnalyzedAction(BaseModel):
-    thought: str = Field(description="Analyze why the user clicked this element to achieve the goal.")
-    description: str = Field(description="A concise description of the step, e.g., '点击登录按钮' or '点击搜索框'")
-
-
-class ReplayRepairDecision(BaseModel):
-    thought: str = Field(description="Why the previous step failed and what fix is most reliable now.")
-    strategy: str = Field(
-        description=(
-            "MUST be one of: [retry_with_new_selector, replace_action, skip_step, human_handoff, no_fix]"
-        )
-    )
-    action_type: Optional[str] = Field(
-        None, description="Used when strategy=replace_action. One of [navigate, click, type, click_type_enter, press_enter, refresh, wait_for_timeout, ensure_quote_token, click_relative]."
-    )
-    target: Optional[str] = Field(
-        None, description="New selector/URL when strategy=retry_with_new_selector or replace_action."
-    )
-    input_value: Optional[str] = Field(None, description="Input value when action_type='type'.")
-    skip_reason: Optional[str] = Field(None, description="Reason when strategy=skip_step.")
-    confidence: float = Field(default=0.5, ge=0, le=1)
 
 # ==========================================
 # 2. 动态大脑核心逻辑
@@ -63,52 +35,19 @@ class ReActAgent:
            - a:has-text("OKX Boost")
            - [role="button"]:has-text("连接钱包")
         3. Avoid fragile hashed class selectors and avoid nth-child when possible.
-        4. Use hexa-id selector only when semantic selectors are ambiguous.
-        4. Explain your logic in the 'thought' field before acting.
+        4. If DOM snapshot provides [ID: hexa-*] or data-testid, prefer those stable anchors.
+        5. NEVER build selector text from dynamic market metrics, e.g. '+50%', '$13.2', '-2.1%'.
+           Bad example(do not): a:has-text("RAVE +50%")
+           Good example: [hexa-id="hexa-123"] or [data-testid="..."] or text="RAVE" or a:has-text("RAVE")
+        6. Explain your logic in the 'thought' field before acting.
         5. For input boxes that require submit, prefer action_type='click_type_enter'.
         6. Use action_type='refresh' when page is stale or blocked by transient UI state.
         7. If a modal/dialog/popover is already open, DO NOT click the opener again. Act inside the modal.
         8. If the previous 1-2 steps already opened a panel/modal, choose the next control inside it, not the old entry button.
+        9. If history contains markers like [CONTEXT_GUARD] / BLOCKED_REPEATED_FAILURE, NEVER choose those selectors/URLs again in this run.
+        10. If user goal asks for analysis/report/summary (e.g., summarize trend or page text), use action_type='summarize'
+            instead of clicking.
         """
-
-    @staticmethod
-    def _image_to_data_url(path: str) -> str:
-        if not path:
-            return ""
-        try:
-            with open(path, "rb") as f:
-                binary = f.read()
-            mime, _ = mimetypes.guess_type(path)
-            mime = mime or "image/png"
-            b64 = base64.b64encode(binary).decode("utf-8")
-            return f"data:{mime};base64,{b64}"
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _extract_json_object(text: str) -> dict:
-        if not text:
-            return {}
-        raw = text.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            raw = raw[start:end + 1]
-        try:
-            return json.loads(raw)
-        except Exception:
-            pass
-        # 兼容单引号字典 / Python字面量格式
-        try:
-            obj = ast.literal_eval(raw)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            pass
-        return {}
 
     @staticmethod
     def _extract_action_from_text(text: str) -> dict:
@@ -116,7 +55,7 @@ class ReActAgent:
             return {}
         lower = text.lower()
         action = None
-        for a in ["click_type_enter", "press_enter", "refresh", "navigate", "click", "type", "done"]:
+        for a in ["click_type_enter", "press_enter", "refresh", "summarize", "navigate", "click", "type", "done"]:
             if re.search(rf"\b{re.escape(a)}\b", lower):
                 action = a
                 break
@@ -160,7 +99,43 @@ class ReActAgent:
         target = normalized.get("target")
         if isinstance(target, str):
             normalized["target"] = target.strip().strip("`")
+            normalized["target"] = ReActAgent._canonicalize_selector_target(
+                normalized.get("target")
+            )
         return normalized
+
+    @staticmethod
+    def _canonicalize_selector_target(target: Optional[str]) -> Optional[str]:
+        if target is None:
+            return None
+        t = str(target).strip()
+        if not t:
+            return None
+
+        # 兼容模型常见输出: [ID: hexa-19] / ID: hexa-19 / hexa-19
+        m = re.search(r"\bhexa-(\d+)\b", t, re.IGNORECASE)
+        if m:
+            return f'[hexa-id="hexa-{m.group(1)}"]'
+
+        # 常见误写: [id="hexa-19"] -> hexa-id
+        m2 = re.search(r"""\[\s*id\s*=\s*["'](hexa-\d+)["']\s*\]""", t, re.IGNORECASE)
+        if m2:
+            return f'[hexa-id="{m2.group(1)}"]'
+
+        # 常见误写: a:text('xxx')，转为 Playwright 可识别 has-text
+        m3 = re.match(r"""^\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*text\((['"])(.+?)\2\)\s*$""", t)
+        if m3:
+            tag = m3.group(1)
+            txt = m3.group(3).replace('"', '\\"')
+            return f'{tag}:has-text("{txt}")'
+        # 常见误写: [text='xxx'] -> text="xxx"
+        m4 = re.match(r"""^\s*\[\s*text\s*=\s*(['"])(.+?)\1\s*\]\s*$""", t, re.IGNORECASE)
+        if m4:
+            txt = (m4.group(2) or "").replace('"', '\\"').strip()
+            if txt:
+                return f'text="{txt}"'
+
+        return t
 
     @staticmethod
     def _is_invalid_target(target: Optional[str]) -> bool:
@@ -185,7 +160,50 @@ class ReActAgent:
             inner = (m.group(1) or "").strip()
             if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", inner):
                 return True
+        # [ID: hexa-xx] 不是合法 Playwright selector，应当在归一化阶段被转换
+        if re.search(r"\[\s*id\s*:\s*hexa-\d+\s*\]", t, re.IGNORECASE):
+            return True
         return False
+
+    @staticmethod
+    def _extract_target_text_hint(target: Optional[str]) -> str:
+        if not target:
+            return ""
+        t = str(target)
+        m = re.search(r"has-text\((['\"])(.*?)\1\)", t, re.IGNORECASE)
+        if m:
+            return (m.group(2) or "").strip()
+        m2 = re.search(r"text\s*=\s*(['\"])(.*?)\1", t, re.IGNORECASE)
+        if m2:
+            return (m2.group(2) or "").strip()
+        m3 = re.search(r"aria-label\s*=\s*(['\"])(.*?)\1", t, re.IGNORECASE)
+        if m3:
+            return (m3.group(2) or "").strip()
+        return ""
+
+    @classmethod
+    def _is_thought_action_contradictory(cls, thought: str, action_type: str, target: Optional[str]) -> bool:
+        if (action_type or "").strip().lower() not in ("click", "type", "click_type_enter"):
+            return False
+        hint = cls._extract_target_text_hint(target)
+        if not hint:
+            return False
+        th = (thought or "").lower()
+        hint_l = hint.lower()
+        # 常见“否定 + 继续找/下一个”的语义，说明不应点击当前被提及对象
+        negative_markers = [
+            "不符合", "不满足", "不对", "不是", "非", "排除", "跳过",
+            "not match", "not on", "doesn't match", "does not match", "exclude", "skip",
+        ]
+        continue_markers = [
+            "继续", "向下", "下一个", "继续查找", "继续寻找", "继续向下查找",
+            "continue", "next", "keep searching", "search down",
+        ]
+        has_negative = any(m in th for m in negative_markers)
+        has_continue = any(m in th for m in continue_markers)
+        # thought 提到了该目标且语义是“排除并继续”，则判定冲突
+        mentions_target = hint_l and hint_l in th
+        return bool(mentions_target and has_negative and has_continue)
 
     @staticmethod
     def _recover_target_from_context(payload: dict, raw_hint: str) -> dict:
@@ -243,6 +261,7 @@ class ReActAgent:
             tag_match = re.search(r"<([a-zA-Z0-9]+)\b", line)
             href_match = re.search(r'href="([^"]*)"', line)
             aria_match = re.search(r'aria-label="([^"]*)"', line)
+            testid_match = re.search(r'data-testid="([^"]*)"', line)
             text = (text_match.group(1).strip() if text_match else "")
             entries.append(
                 {
@@ -251,6 +270,7 @@ class ReActAgent:
                     "tag": (tag_match.group(1).lower() if tag_match else ""),
                     "href": (href_match.group(1) if href_match else ""),
                     "aria_label": (aria_match.group(1) if aria_match else ""),
+                    "testid": (testid_match.group(1) if testid_match else ""),
                     "raw": line,
                 }
             )
@@ -339,8 +359,28 @@ class ReActAgent:
                 best_entry = entry
 
         if best_entry and best_score > 0:
+            if best_entry.get("testid"):
+                return f'[data-testid="{best_entry["testid"]}"]'
             return f'[hexa-id="{best_entry["id"]}"]'
         return None
+
+    @staticmethod
+    def _is_fragile_metric_selector(target: Optional[str]) -> bool:
+        if not target:
+            return False
+        t = str(target)
+        low = t.lower()
+        if "has-text(" not in low and "text=" not in low:
+            return False
+        # 动态行情/涨跌幅/价格文本：+50% / -2.1% / $13.2 / ¥88 / 1.2%
+        if re.search(r"[+-]?\d+(?:\.\d+)?\s*%", t):
+            return True
+        if re.search(r"[$¥€]\s*\d+(?:\.\d+)?", t):
+            return True
+        # 典型“币名+涨幅”拼接
+        if re.search(r"[A-Z][A-Z0-9._/-]{2,20}\s+[+-]?\d+(?:\.\d+)?\s*%", t):
+            return True
+        return False
 
     @classmethod
     def _recover_target_from_dom_snapshot(cls, payload: dict, dom_snapshot: str) -> dict:
@@ -366,10 +406,74 @@ class ReActAgent:
                 return payload
         return payload
 
+    @classmethod
+    def _align_hexa_target_with_thought(cls, payload: dict, dom_snapshot: str) -> dict:
+        """
+        若模型给了 hexa-id，但 thought 明确提到代币名（如 RAVE），
+        则校验当前 hexa-id 对应文本是否匹配；不匹配时自动重选。
+        """
+        if not isinstance(payload, dict):
+            return payload
+        action = (payload.get("action_type") or "").strip().lower()
+        target = str(payload.get("target") or "").strip()
+        if action not in ("click", "type", "click_type_enter"):
+            return payload
+        if "hexa-id" not in target:
+            return payload
+
+        thought = str(payload.get("thought") or "")
+        entries = cls._parse_dom_snapshot_entries(dom_snapshot)
+        if not entries:
+            return payload
+
+        m = re.search(r'hexa-id\s*=\s*["\'](hexa-\d+)["\']', target)
+        if not m:
+            return payload
+        current_hid = m.group(1)
+        cur_entry = next((e for e in entries if e.get("id") == current_hid), None)
+        cur_text = (cur_entry.get("text") if cur_entry else "") or ""
+
+        # 提取 thought 里的候选代币符号（过滤常见非目标词）
+        symbols = []
+        ignore = {
+            "OKX", "BSC", "USDT", "BTC", "ETH", "USD", "CNY",
+            "AI", "DEX", "BOOST", "WEB3",
+        }
+        for tok in re.findall(r"\b[A-Z][A-Z0-9._/-]{2,20}\b", thought):
+            t = tok.strip().upper()
+            if t and t not in ignore and t not in symbols:
+                symbols.append(t)
+        if not symbols:
+            return payload
+
+        # 当前 hexa 文本已匹配任一 symbol 则接受
+        cur_upper = cur_text.upper()
+        if any(sym in cur_upper for sym in symbols):
+            return payload
+
+        # 否则按 symbol 精确重选，优先 text 精确命中，其次包含命中
+        for sym in symbols:
+            exact = next((e for e in entries if (e.get("text") or "").strip().upper() == sym), None)
+            if exact:
+                if exact.get("testid"):
+                    payload["target"] = f'[data-testid="{exact["testid"]}"]'
+                else:
+                    payload["target"] = f'[hexa-id="{exact["id"]}"]'
+                return payload
+            contain = next((e for e in entries if sym in (e.get("text") or "").upper()), None)
+            if contain:
+                if contain.get("testid"):
+                    payload["target"] = f'[data-testid="{contain["testid"]}"]'
+                else:
+                    payload["target"] = f'[hexa-id="{contain["id"]}"]'
+                return payload
+
+        return payload
+
     async def _chat_json(self, system_prompt: str, user_prompt: str, screenshot_path: str = "") -> dict:
         content = [{"type": "text", "text": user_prompt + "\nReturn ONLY one JSON object."}]
         if screenshot_path:
-            data_url = self._image_to_data_url(screenshot_path)
+            data_url = image_to_data_url(screenshot_path)
             if data_url:
                 content.append({"type": "image_url", "image_url": {"url": data_url}})
         resp = await self.raw_client.chat.completions.create(
@@ -381,7 +485,7 @@ class ReActAgent:
             temperature=0.1,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        payload = self._extract_json_object(raw)
+        payload = extract_json_object(raw)
         if payload:
             payload = self._normalize_payload(payload)
             payload = self._recover_target_from_context(payload, raw)
@@ -406,7 +510,7 @@ class ReActAgent:
             temperature=0.0,
         )
         retry_raw = (retry_resp.choices[0].message.content or "").strip()
-        payload = self._extract_json_object(retry_raw)
+        payload = extract_json_object(retry_raw)
         if payload:
             payload = self._normalize_payload(payload)
             payload = self._recover_target_from_context(payload, retry_raw)
@@ -418,6 +522,48 @@ class ReActAgent:
         if isinstance(parsed, dict) and not parsed.get("thought"):
             parsed["thought"] = retry_raw[:220] or "model returned no thought"
         return parsed
+
+    async def summarize_page(
+        self,
+        goal: str,
+        history: str,
+        current_url: str,
+        dom_snapshot: str,
+        instruction: str = "",
+        screenshot_path: str = "",
+    ) -> str:
+        prompt = f"""
+        USER GOAL: {goal}
+        OPTIONAL INSTRUCTION: {instruction or "(none)"}
+        ACTION HISTORY:
+        {history if history else "No actions taken yet."}
+        CURRENT URL: {current_url}
+        CURRENT SCREEN (Interactive Elements):
+        {dom_snapshot}
+
+        Task:
+        - Provide a concise Chinese summary for user reading.
+        - If discussing token/price trend, include key observation points and risk hints.
+        - Keep it practical and short (4-8 lines).
+        """
+        content = [{"type": "text", "text": prompt}]
+        if screenshot_path:
+            data_url = image_to_data_url(screenshot_path)
+            if data_url:
+                content.append({"type": "image_url", "image_url": {"url": data_url}})
+        try:
+            resp = await self.raw_client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a concise web-page summarizer for RPA."},
+                    {"role": "user", "content": content},
+                ],
+                temperature=0.2,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            logger.warning(f"⚠️ [Agent] 页面总结失败: {e}")
+            return ""
 
     async def decide_next_action(
         self,
@@ -463,9 +609,51 @@ class ReActAgent:
                 screenshot_path=screenshot_path,
             )
             payload = self._normalize_payload(payload if isinstance(payload, dict) else {})
+            if self._is_fragile_metric_selector(payload.get("target")):
+                payload["target"] = None
             if self._is_invalid_target(payload.get("target")):
                 payload["target"] = None
             payload = self._recover_target_from_dom_snapshot(payload, dom_snapshot)
+            payload = self._align_hexa_target_with_thought(payload, dom_snapshot)
+            if self._is_thought_action_contradictory(
+                payload.get("thought", ""),
+                payload.get("action_type", ""),
+                payload.get("target"),
+            ):
+                logger.warning("⚠️ [Agent] 检测到 thought 与 action 冲突，触发一次重决策。")
+                repair_prompt = (
+                    prompt
+                    + "\n\nYour previous output was contradictory: you said current token should be skipped, "
+                      "but still clicked it. Re-plan now. If token mismatches conditions, DO NOT click it."
+                )
+                repaired = await self._chat_json(
+                    system_prompt=self.system_prompt,
+                    user_prompt=repair_prompt,
+                    screenshot_path=screenshot_path,
+                )
+                repaired = self._normalize_payload(repaired if isinstance(repaired, dict) else {})
+                if self._is_fragile_metric_selector(repaired.get("target")):
+                    repaired["target"] = None
+                if self._is_invalid_target(repaired.get("target")):
+                    repaired["target"] = None
+                repaired = self._recover_target_from_dom_snapshot(repaired, dom_snapshot)
+                repaired = self._align_hexa_target_with_thought(repaired, dom_snapshot)
+                contradiction_after_repair = self._is_thought_action_contradictory(
+                    repaired.get("thought", ""),
+                    repaired.get("action_type", ""),
+                    repaired.get("target"),
+                )
+                if not contradiction_after_repair:
+                    payload = repaired
+                else:
+                    # 二次重决策仍冲突：强制丢弃该目标，避免继续点击同一错误对象
+                    payload["thought"] = (
+                        (payload.get("thought") or "")
+                        + " | contradictory target rejected by guard; fallback to refresh"
+                    ).strip()
+                    payload["action_type"] = "refresh"
+                    payload["target"] = None
+                    payload["input_value"] = None
             payload.setdefault("thought", "model returned no thought")
             payload.setdefault("action_type", "refresh")
             if payload.get("action_type") in ("click", "type", "click_type_enter") and not payload.get("target"):
@@ -530,6 +718,72 @@ class ReActAgent:
             logger.error(f"❌ AI 分析失败: {e}")
             return AnalyzedAction(thought="Failed to analyze.", description="执行点击操作")
 
+    async def decide_click_coordinate(
+        self,
+        goal: str,
+        history: str,
+        current_url: str,
+        selector: str,
+        candidates: list[dict],
+        screenshot_path: str = "",
+    ) -> ClickCoordinateDecision:
+        prompt = f"""
+        USER GOAL: {goal}
+
+        ACTION HISTORY:
+        {history if history else "No history."}
+
+        CURRENT URL: {current_url}
+        AMBIGUOUS SELECTOR: {selector}
+
+        MULTIPLE MATCH CANDIDATES (JSON):
+        {json.dumps(candidates, ensure_ascii=False)}
+
+        Task:
+        - These candidates are different elements with the same/similar text.
+        - Choose the single most correct one for the goal.
+        - Prefer returning coordinates (x_ratio/y_ratio in [0,1]) for stable click.
+        - If not confident with coordinate, return candidate_index.
+        - If none is reliable, set use_coordinate=false and candidate_index=null.
+        """
+
+        system_prompt = """
+        You are a coordinate disambiguation assistant for browser automation.
+        Return ONLY JSON with keys:
+        - thought: string
+        - use_coordinate: boolean
+        - x_ratio: number|null
+        - y_ratio: number|null
+        - candidate_index: integer|null
+        - confidence: number (0~1)
+
+        Rules:
+        1) If screenshot shows clear target, set use_coordinate=true with x_ratio/y_ratio.
+        2) If coordinate uncertain but a candidate item is clearly correct, set candidate_index.
+        3) Never guess randomly.
+        """
+        try:
+            payload = await self._chat_json(
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                screenshot_path=screenshot_path,
+            )
+            if not isinstance(payload, dict):
+                payload = {}
+            payload.setdefault("thought", "coordinate decision fallback")
+            payload.setdefault("use_coordinate", False)
+            payload.setdefault("x_ratio", None)
+            payload.setdefault("y_ratio", None)
+            payload.setdefault("candidate_index", None)
+            payload.setdefault("confidence", 0.0)
+            return ClickCoordinateDecision.model_validate(payload)
+        except Exception:
+            return ClickCoordinateDecision(
+                thought="coordinate decision failed",
+                use_coordinate=False,
+                confidence=0.0,
+            )
+
     async def repair_failed_replay_step(
         self,
         task_name: str,
@@ -573,6 +827,13 @@ class ReActAgent:
         7) For token dropdown mismatch, prefer replace_action with action_type='ensure_quote_token',
            input_value='<TARGET_SYMBOL>' and optional target='<dropdown button selector>'.
         8) If an input action must submit, prefer action_type='click_type_enter'.
+        9) If failure is due to intercept/overlay/modal, first remove the top-most blocking popup (highest z-index/front-most), then retry target action.
+        10) For popup handling, prefer close controls in order:
+            a) top-right X / close icon / aria-label contains close
+            b) close-like text: 关闭 / 跳过 / Skip / Close / Cancel
+            c) acknowledgement text: 我知道了 / 我已知晓 / Got it
+            Never prefer 下一步 / 上一步 / Next / Previous if any close option exists.
+        11) If multiple popups exist, solve one layer at a time: close top layer first, re-evaluate DOM, then handle next layer.
         """
 
         try:

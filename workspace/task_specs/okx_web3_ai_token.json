@@ -1,0 +1,37 @@
+{
+  "task_name": "OKX_Web3_AI_FullFlow",
+  "goal": "进入 OKX Web3(web3.okx.com), 点击行情然后进入OKX boost页面, 选一个旁边有绿色小火箭(获得额外交易量)大于等于50%的币(不要RIVER)点进去该币的详细页面, 再点击图表栏旁边的社媒热度, 然后查看有哪些热点媒体新闻并总结。任务完成.",
+  "notes": [
+    "优先使用页面中可见按钮和稳定 selector。",
+    "输入金额后需要确认时，使用 click_type_enter 或 press_enter。",
+    "如果页面卡住或出现遮挡，优先 refresh 再继续。",
+    "如遇登录/签名/验证码则请求人工接管。",
+    "优先使用文本与结构定位，不要依赖坐标点击（除非无法定位）。"
+  ],
+  "start_url": "https://www.okx.com/web3",
+  "manual_review": false,
+  "max_steps": 50,
+  "allowed_domains": [
+    "okx.com",
+    "web3.okx.com"
+  ],
+  "blocked_keywords": [],
+  "completion_logic": "any",
+  "completion_checks": [
+    {
+      "check_type": "action_target_contains",
+      "action_type": "click",
+      "value": "买入"
+    }
+  ],
+  "failure_policy": {
+    "mode": "continue",
+    "max_consecutive_failures": 6
+  },
+  "loop_policy": {
+    "enabled": false,
+    "loop_name": "main_loop",
+    "iterations": 1,
+    "max_iteration_retries": 30
+  }
+}

@@ -1,13 +1,9 @@
 import logging
-import json
-import re
-import base64
-import mimetypes
 from typing import Optional
 
-from openai import AsyncOpenAI
-
-from hexaflow.agents.react_agent import ReActAgent, ReplayRepairDecision
+from hexaflow.agents.react_agent import ReActAgent
+from hexaflow.agents.schemas import ReplayRepairDecision
+from hexaflow.tools.helpers import extract_json_object, image_to_data_url
 
 logger = logging.getLogger("AIHealAgent")
 
@@ -20,38 +16,6 @@ class AIHealAgent(ReActAgent):
 
     def __init__(self, api_key: str, base_url: str, model_name: str):
         super().__init__(api_key=api_key, base_url=base_url, model_name=model_name)
-        self.raw_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-
-    @staticmethod
-    def _image_to_data_url(path: str) -> Optional[str]:
-        if not path:
-            return None
-        try:
-            with open(path, "rb") as f:
-                data = f.read()
-            mime, _ = mimetypes.guess_type(path)
-            mime = mime or "image/png"
-            encoded = base64.b64encode(data).decode("utf-8")
-            return f"data:{mime};base64,{encoded}"
-        except Exception:
-            return None
-
-    @staticmethod
-    def _extract_json_object(text: str) -> dict:
-        if not text:
-            return {}
-        raw = text.strip()
-        if raw.startswith("```"):
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            raw = raw[start:end + 1]
-        try:
-            return json.loads(raw)
-        except Exception:
-            return {}
 
     async def repair_failed_replay_step(
         self,
@@ -73,7 +37,7 @@ class AIHealAgent(ReActAgent):
 
         data_urls = []
         for p in screenshot_paths:
-            d = self._image_to_data_url(p)
+            d = image_to_data_url(p)
             if d:
                 data_urls.append(d)
         prompt = f"""
@@ -136,7 +100,7 @@ class AIHealAgent(ReActAgent):
                 temperature=0.1,
             )
             raw = (resp.choices[0].message.content or "").strip()
-            payload = self._extract_json_object(raw)
+            payload = extract_json_object(raw)
             decision = ReplayRepairDecision.model_validate(payload)
             logger.info(
                 f"🧠 [AIHeal] strategy={decision.strategy} confidence={decision.confidence:.2f} thought={decision.thought}"

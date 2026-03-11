@@ -11,6 +11,46 @@ class DomParser:
         """
         js_code = """
         () => {
+            const normalizeText = (s) => (s || '')
+                .replace(/\\n+/g, ' ')
+                .replace(/\\s+/g, ' ')
+                .trim();
+
+            const cleanActionText = (raw) => {
+                let t = normalizeText(raw);
+                if (!t) return '';
+                // 去掉尾部涨跌幅，如: "PENGUIN +50%" / "RIVER -12.3%"
+                t = t.replace(/\\s+[+-]?\\d+(?:\\.\\d+)?%\\s*$/g, '').trim();
+                // 去掉尾部价格，如: "RIVER $12.53"
+                t = t.replace(/\\s+\\$?\\d+(?:[.,]\\d+)*(?:[kKmMbB])?\\s*$/g, '').trim();
+                // 去掉明显噪音尾词
+                t = t.replace(/\\s+(?:buy|sell|trade|swap)$/i, '').trim();
+                return t;
+            };
+
+            const pickBestText = (el) => {
+                // 1) 优先更“局部”的可见子文本，减少把父容器整行文字拼进去
+                const candidates = [];
+                const nodes = el.querySelectorAll('span, strong, b, em, p, div');
+                for (const n of nodes) {
+                    const style = window.getComputedStyle(n);
+                    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+                    const rect = n.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    const txt = cleanActionText(n.innerText || '');
+                    if (!txt) continue;
+                    if (txt.length > 30) continue;
+                    candidates.push(txt);
+                    if (candidates.length >= 24) break;
+                }
+                if (candidates.length > 0) {
+                    candidates.sort((a, b) => a.length - b.length);
+                    return candidates[0];
+                }
+                // 2) 回退到元素整体文本
+                return cleanActionText(el.innerText || el.value || el.placeholder || '');
+            };
+
             const elements = document.querySelectorAll('button, a, input, label, [role="button"], [role="link"], [role="checkbox"], [tabindex]');;
             let result = "";
             let counter = 0;
@@ -28,15 +68,17 @@ class DomParser:
                 el.setAttribute('hexa-id', hexaId);
                 
                 let tag = el.tagName.toLowerCase();
-                let text = (el.innerText || el.value || el.placeholder || '').trim().substring(0, 60).replace(/\\n/g, ' ');
+                let text = pickBestText(el).substring(0, 60);
                 let ariaLabel = el.getAttribute('aria-label') || '';
                 let href = el.getAttribute('href') || '';
+                let testid = el.getAttribute('data-testid') || '';
                 
                 // 只保留有意义的元素（有文本或有aria-label的）
                 if (text || ariaLabel || tag === 'input') {
                     let info = `[ID: ${hexaId}] <${tag}`;
                     if (text) info += ` text="${text}"`;
                     if (ariaLabel) info += ` aria-label="${ariaLabel}"`;
+                    if (testid) info += ` data-testid="${testid}"`;
                     if (href) info += ` href="${href}"`;
                     info += `>`;
                     result += info + "\\n";
@@ -67,13 +109,46 @@ class DomParser:
         js_code = """
         (el) => {
             if (!el) return null;
+
+            const normalizeText = (s) => (s || '')
+                .replace(/\\n+/g, ' ')
+                .replace(/\\s+/g, ' ')
+                .trim();
+            const cleanActionText = (raw) => {
+                let t = normalizeText(raw);
+                if (!t) return '';
+                t = t.replace(/\\s+[+-]?\\d+(?:\\.\\d+)?%\\s*$/g, '').trim();
+                t = t.replace(/\\s+\\$?\\d+(?:[.,]\\d+)*(?:[kKmMbB])?\\s*$/g, '').trim();
+                t = t.replace(/\\s+(?:buy|sell|trade|swap)$/i, '').trim();
+                return t;
+            };
+            const pickBestText = (root) => {
+                const candidates = [];
+                const nodes = root.querySelectorAll('span, strong, b, em, p, div');
+                for (const n of nodes) {
+                    const style = window.getComputedStyle(n);
+                    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+                    const rect = n.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    const txt = cleanActionText(n.innerText || '');
+                    if (!txt) continue;
+                    if (txt.length > 30) continue;
+                    candidates.push(txt);
+                    if (candidates.length >= 24) break;
+                }
+                if (candidates.length > 0) {
+                    candidates.sort((a, b) => a.length - b.length);
+                    return candidates[0];
+                }
+                return cleanActionText(root.innerText || root.value || '');
+            };
             
             // 优先级 1: 开发者留的测试钩子或无障碍标签 (极其稳定)
             if (el.getAttribute('data-testid')) return `[data-testid="${el.getAttribute('data-testid')}"]`;
             if (el.getAttribute('aria-label')) return `${el.tagName.toLowerCase()}[aria-label="${el.getAttribute('aria-label')}"]`;
             
             // 优先级 2: 用户可见文本 (最符合业务直觉，抗前端重构能力最强)
-            let text = (el.innerText || el.value || '').trim();
+            let text = pickBestText(el);
             if (text) {
                 // 清理文本：替换换行符，转义双引号，截取前20个字
                 text = text.replace(/\\n/g, ' ').replace(/"/g, '\\\\"').substring(0, 20).trim();

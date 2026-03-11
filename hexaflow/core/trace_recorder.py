@@ -4,12 +4,18 @@ import logging
 from datetime import datetime
 from pydantic import BaseModel
 # 借用我们之前在 planner.py 里定义的严谨结构
-from hexaflow.agents.planner import WorkflowBlueprint, FlowStep, PreCheck, StepAction, ElementFingerprint
+from hexaflow.agents.schemas import (
+    ElementFingerprint,
+    FlowStep,
+    PreCheck,
+    StepAction,
+    WorkflowBlueprint,
+)
 
 logger = logging.getLogger("TraceRecorder")
 
 class TraceRecorder:
-    def __init__(self, task_name: str, workspace_dir: str = "memory/workspace/traces"):
+    def __init__(self, task_name: str, workspace_dir: str = "workspace/traces"):
         self.task_name = task_name
         self.workspace_dir = workspace_dir
         self.steps = []

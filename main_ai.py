@@ -1,17 +1,18 @@
 import asyncio
-import os
 import json
+import os
+from dotenv import load_dotenv
 
 from hexaflow.agents.heal_agent import AIHealAgent
 from hexaflow.browser.cdp_runtime import CDPConfig
 from hexaflow.core.engine import HexaEngine
+from hexaflow.tools.runtime_config import load_runtime_config
 
+load_dotenv()
 
 async def main():
-    task_spec_path = os.getenv(
-        "AI_TASK_SPEC_PATH",
-        "memory/workspace/task_specs/okx_web3_ai_full.json",
-    )
+    cfg, cfg_path = load_runtime_config()
+    task_spec_path = cfg["ai"]["task_spec_path"]
     spec_start_url = "https://www.okx.com/web3"
     try:
         with open(task_spec_path, "r", encoding="utf-8") as f:
@@ -20,23 +21,30 @@ async def main():
     except Exception:
         pass
 
-    use_cdp = os.getenv("USE_CDP", "1") == "1"
-    cdp_start_url = os.getenv("CDP_START_URL", spec_start_url)
-    ai_repair_only = os.getenv("AI_REPAIR_ONLY", "1") == "1"
-    ai_decision_use_vision = os.getenv("AI_DECISION_USE_VISION", "1") == "1"
+    use_cdp = bool(cfg["browser"]["use_cdp"])
+    cdp_start_url = cfg["browser"]["cdp_start_url"] or spec_start_url
+    ai_repair_only = bool(cfg["ai"]["ai_repair_only"])
+    ai_decision_use_vision = bool(cfg["ai"]["decision_use_vision"])
 
     ai_agent = AIHealAgent(
-        api_key="ollama",
-        base_url="http://localhost:11434/v1",
-        model_name="qwen3-vl:8b-instruct"
+        api_key=os.getenv("OLLAMA_API_KEY", ""),
+        base_url=os.getenv("OLLAMA_BASE_URL", ""),
+        model_name=os.getenv("OLLAMA_MODEL", ""),
     )
 
-    engine = HexaEngine(headless=False)
+    ai_agent_openai = AIHealAgent(
+        api_key=os.getenv("SILICONFLOW_API_KEY", ""),
+        base_url=os.getenv("SILICONFLOW_BASE_URL", ""),
+        model_name=os.getenv("SILICONFLOW_MODEL", ""),
+    )
+
+    engine = HexaEngine(headless=bool(cfg["browser"]["headless"]))
+    print(f"Using runtime config: {cfg_path}")
     await engine.start(
         use_cdp=use_cdp,
         cdp_config=CDPConfig(
-            user_data_dir=os.getenv("CHROME_USER_DATA_DIR", "/Users/kenshinnb/pw-profiles/okx-chrome"),
-            profile_directory=os.getenv("CHROME_PROFILE_DIRECTORY", "Default"),
+            user_data_dir=cfg["browser"]["user_data_dir"],
+            profile_directory=cfg["browser"]["profile_directory"],
         )
         if use_cdp
         else None,

@@ -1,0 +1,77 @@
+{
+  "task_name": "Task_20260311_200514",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://www.okx.com/web3",
+      "pre_check": {
+        "expected_url_contains": "www.okx.com/web3",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "根据用户目标，需要选择一个旁边有绿色小火箭（获得额外交易量）且涨幅大于等于50%的币，但不能选RIVER。当前页面中，RIVER是第一个，且涨幅为+50%，但用户明确要求不要选RIVER。因此，我需要选择下一个符合条件的币。在列表中，RIVER之后是RAVE，其涨幅也是+50%，且旁边有绿色小火箭图标，符合要求。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "a:has-text('RIVER')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('RIVER')",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "RIVER $296.54M +15.32%",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-powerLink-a11y dex-powerLink H7zT0g__dex"
+        }
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "```json\n{\n  \"action_type\": \"click\",\n  \"selector\": \"a:has-text('社媒热度')\"\n}\n```",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "a:has-text('社媒热度')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('社媒热度')",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    }
+  ]
+}

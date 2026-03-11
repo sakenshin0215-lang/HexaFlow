@@ -1,0 +1,125 @@
+{
+  "run_key": "Task_20260311_204143",
+  "task_name": "Task_20260311_204143",
+  "mode": "dynamic",
+  "started_at": "2026-03-11T20:41:43",
+  "steps": [
+    {
+      "ts": "2026-03-11T20:41:56",
+      "step": "step_1",
+      "url": "https://web3.okx.com/zh-hans/token?ct=boost",
+      "clickable": 123,
+      "input_count": 2,
+      "delta_clickable": 123,
+      "delta_input": 2,
+      "line_count": 125,
+      "sample_clickable": [
+        "跳转至主要内容",
+        "欧易标志，访问首页",
+        "行情",
+        "扫链",
+        "策略"
+      ],
+      "sample_input": [
+        "币种、地址、DApp",
+        "数量"
+      ]
+    },
+    {
+      "ts": "2026-03-11T20:42:34",
+      "step": "step_2",
+      "url": "https://web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c",
+      "clickable": 104,
+      "input_count": 2,
+      "delta_clickable": -19,
+      "delta_input": 0,
+      "line_count": 106,
+      "sample_clickable": [
+        "跳转至主要内容",
+        "欧易标志，访问首页",
+        "行情",
+        "扫链",
+        "策略"
+      ],
+      "sample_input": [
+        "币种、地址、DApp",
+        "请输入数量"
+      ]
+    },
+    {
+      "ts": "2026-03-11T20:43:40",
+      "step": "step_3",
+      "url": "https://web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c#dt=vibes",
+      "clickable": 83,
+      "input_count": 2,
+      "delta_clickable": -21,
+      "delta_input": 0,
+      "line_count": 85,
+      "sample_clickable": [
+        "跳转至主要内容",
+        "欧易标志，访问首页",
+        "行情",
+        "扫链",
+        "策略"
+      ],
+      "sample_input": [
+        "币种、地址、DApp",
+        "请输入数量"
+      ]
+    },
+    {
+      "ts": "2026-03-11T20:44:36",
+      "step": "step_4",
+      "url": "https://web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c#dt=vibes",
+      "clickable": 100,
+      "input_count": 2,
+      "delta_clickable": 17,
+      "delta_input": 0,
+      "line_count": 102,
+      "sample_clickable": [
+        "跳转至主要内容",
+        "欧易标志，访问首页",
+        "行情",
+        "扫链",
+        "策略"
+      ],
+      "sample_input": [
+        "币种、地址、DApp",
+        "请输入数量"
+      ]
+    },
+    {
+      "ts": "2026-03-11T20:45:41",
+      "step": "step_5",
+      "url": "https://web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c#dt=vibes",
+      "clickable": 123,
+      "input_count": 2,
+      "delta_clickable": 23,
+      "delta_input": 0,
+      "line_count": 125,
+      "sample_clickable": [
+        "跳转至主要内容",
+        "欧易标志，访问首页",
+        "行情",
+        "扫链",
+        "策略"
+      ],
+      "sample_input": [
+        "币种、地址、DApp",
+        "请输入数量"
+      ]
+    }
+  ],
+  "summary": {
+    "step_count": 5,
+    "clickable_sum": 533,
+    "input_sum": 10,
+    "max_clickable": 123,
+    "max_input": 2,
+    "last_clickable": 123,
+    "last_input": 2,
+    "avg_clickable": 106.6,
+    "avg_input": 2.0
+  },
+  "ended_at": "2026-03-11T20:46:17"
+}

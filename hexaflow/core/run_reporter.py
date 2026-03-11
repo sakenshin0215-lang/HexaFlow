@@ -8,7 +8,7 @@ from hexaflow.core.state_machine import RunEvent, RunState, StateMachine
 
 
 class RunReporter:
-    def __init__(self, state_machine: StateMachine, report_dir: str = "memory/workspace/reports"):
+    def __init__(self, state_machine: StateMachine, report_dir: str = "workspace/reports"):
         self.state_machine = state_machine
         self.report_dir = report_dir
         os.makedirs(self.report_dir, exist_ok=True)

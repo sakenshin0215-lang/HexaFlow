@@ -1,0 +1,99 @@
+{
+  "task_name": "Task_20260311_195022",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://www.okx.com/web3",
+      "pre_check": {
+        "expected_url_contains": "www.okx.com/web3",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "根据用户目标，需要选择一个旁边有绿色小火箭（获得额外交易量）且涨幅大于等于50%的币（排除RIVER）。在当前页面中，RAVE旁边有绿色小火箭且涨幅为+50%，符合要求。因此，点击RAVE进入其详细页面。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "a:has-text('RAVE')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('RAVE')",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "RAVE $8.15M -4.62%",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-powerLink-a11y dex-powerLink H7zT0g__dex"
+        }
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "```json\n{\n  \"action_type\": \"click\",\n  \"selector\": \"a:has-text('社媒热度')\"\n}\n```",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c",
+        "expected_dom_selector": "a:has-text('社媒热度')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('社媒热度')",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "```json\n{\n  \"action_type\": \"click\",\n  \"selector\": \"a:has-text('社媒热度')\"\n}\n```",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0x97693439ea2f0ecdeb9135881e49f354656a911c",
+        "expected_dom_selector": "a:has-text('社媒热度')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "summarize",
+        "target": "总结当前币走势与媒体热度",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    }
+  ]
+}

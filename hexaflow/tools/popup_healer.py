@@ -25,7 +25,7 @@ class PopupSolution(BaseModel):
 # 2. 弹窗记忆缓存库 (复用你的优秀逻辑)
 # ==========================================
 class PopupCache:
-    def __init__(self, cache_file: str = "memory/workspace/popup/popup_cache.json"):
+    def __init__(self, cache_file: str = "workspace/popup/popup_cache.json"):
         self.cache_file = cache_file
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.experiences = self._load()
@@ -134,9 +134,16 @@ class PopupHealer:
         
         CRITICAL RULES:
         1. Identify the 'Close' (X), 'Skip', 'Cancel', or 'I understand' button.
+        1.1 If there are multiple stacked popups, ALWAYS handle the top-most popup first (highest z-index / visually front-most), then re-check remaining popups.
         2. DO NOT use dynamic/hashed classes (e.g., `.css-1y2x`).
         3. Prefer Playwright's native text selector: `text="我知道了"` or `text="Skip"`.
+        3.1 Prefer explicit close controls in this strict order:
+             a) top-right X / close icon / aria-label contains close
+             b) close-like text: 关闭 / 跳过 / Skip / Close / Cancel
+             c) acknowledgement text: 我知道了 / 我已知晓 / Got it
+        3.2 NEVER click tutorial progression buttons such as 下一步 / 上一步 / Next / Previous when a close option exists.
         4. If using XPath, you MUST use `.` to include nested text, e.g., `xpath=//button[contains(., 'Close')]`.
+        5. Return ONE selector for the immediate top-most blocking popup only. After closing, caller will invoke you again if needed.
         """
 
     @staticmethod
@@ -151,13 +158,30 @@ class PopupHealer:
         仅截取当前视口，作为弹窗视觉上下文传给 LLM。
         """
         try:
+            await self._wait_popup_settle(page)
             img_bytes = await page.screenshot(full_page=False, scale="css", type="png")
             return self._bytes_to_data_url(img_bytes, mime="image/png")
         except Exception:
             return ""
 
+    @staticmethod
+    async def _wait_popup_settle(page: Page):
+        """
+        弹窗截图前的轻量稳定等待，避免“刚弹出就截”导致视觉不完整。
+        """
+        settle_ms = int(os.getenv("POPUP_SCREENSHOT_SETTLE_MS", "700"))
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=1200)
+        except Exception:
+            pass
+        try:
+            await page.wait_for_timeout(max(120, settle_ms))
+        except Exception:
+            pass
+
     async def _observe_clean_popups(self, page: Page) -> str:
         """注入 JS，连拍提取脱水版的弹窗 HTML"""
+        await self._wait_popup_settle(page)
         script = """() => {
             const popups = document.querySelectorAll('dialog, [role="dialog"], [class*="modal" i], [class*="banner" i], [style*="z-index"]');
             let result = [];
@@ -214,6 +238,7 @@ class PopupHealer:
         prompt = (
             "Analyze this popup and return a selector to close/skip it.\n"
             "If HTML and screenshot conflict, trust screenshot visibility first.\n"
+            "Important: choose selector for top-most blocking popup first; avoid 下一步/Next when close is available.\n"
             f"Popup HTML:\n```html\n{popup_html}\n```"
         )
         logger.info("🧠 [Healer] 遇到未知弹窗，正在呼叫大模型思考破解方案...")

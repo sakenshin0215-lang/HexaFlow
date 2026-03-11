@@ -3,6 +3,8 @@ import re
 import asyncio
 import hashlib
 import logging
+import time
+from pathlib import Path
 
 from playwright.async_api import Page
 
@@ -13,10 +15,150 @@ logger = logging.getLogger("HexaEngine")
 
 
 class EngineSupportMixin:
+    @staticmethod
+    def _canonicalize_runtime_target(target: str) -> str:
+        t = (target or "").strip()
+        if not t:
+            return t
+        m_text = re.match(r"""^\s*\[\s*text\s*=\s*(['"])(.+?)\1\s*\]\s*$""", t, re.IGNORECASE)
+        if m_text:
+            txt = (m_text.group(2) or "").replace('"', '\\"').strip()
+            if txt:
+                return f'text="{txt}"'
+        m = re.search(r"\bhexa-(\d+)\b", t, re.IGNORECASE)
+        if m:
+            return f'[hexa-id="hexa-{m.group(1)}"]'
+        m2 = re.search(r"""\[\s*id\s*=\s*["'](hexa-\d+)["']\s*\]""", t, re.IGNORECASE)
+        if m2:
+            return f'[hexa-id="{m2.group(1)}"]'
+        return t
+
+    @staticmethod
+    def _trace_wildcard_to_regex_text(raw_text: str) -> str:
+        """
+        Trace 通配符语法：
+        - 使用 *** 表示任意动态片段
+        例如：买入 *** RIVER ($***)
+        """
+        txt = raw_text or ""
+        escaped = re.escape(txt)
+        # 将 \*\*\* 还原为非贪婪通配
+        pattern = escaped.replace(r"\*\*\*", ".*?")
+        return pattern
+
+    def _apply_trace_wildcard_selector(self, selector: str) -> str:
+        """
+        将 trace 中带 *** 的动态 selector 转为 Playwright 可执行的 regex selector。
+        目前支持：
+        1) text="...***..."
+        2) text='...***...'
+        3) tag:has-text("...***...")
+        4) tag:has-text('...***...')
+        5) 纯文本中包含 ***（按 text 正则处理）
+        """
+        raw = (selector or "").strip()
+        if not raw or "***" not in raw:
+            return raw
+
+        # text="..."/text='...'
+        m_text = re.match(r"""^\s*text\s*=\s*(['"])(.*)\1\s*$""", raw)
+        if m_text:
+            inner = m_text.group(2)
+            pattern = self._trace_wildcard_to_regex_text(inner)
+            return f"text=/{pattern}/i"
+
+        # tag:has-text("...") / tag:has-text('...')
+        m_has_text = re.match(
+            r"""^\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*has-text\((['"])(.*)\2\)\s*$""",
+            raw,
+        )
+        if m_has_text:
+            tag = m_has_text.group(1)
+            inner = m_has_text.group(3)
+            pattern = self._trace_wildcard_to_regex_text(inner)
+            # 用 tag + text 正则组合，避免 has-text 字符串精确匹配失效
+            return f"{tag} >> text=/{pattern}/i"
+
+        # 兜底：当作 text 正则
+        pattern = self._trace_wildcard_to_regex_text(raw)
+        return f"text=/{pattern}/i"
+
+    @staticmethod
+    def _remove_previous_screenshots(screenshot_dir: str, prefix: str):
+        """
+        覆盖式截图：每次新截图前删除同类历史截图，避免目录持续膨胀。
+        """
+        try:
+            p = Path(screenshot_dir)
+            if not p.exists():
+                return
+            for f in p.glob(f"{prefix}*.png"):
+                try:
+                    f.unlink(missing_ok=True)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    def _cleanup_screenshot_cache(self, screenshot_dir: str = "workspace/screenshots"):
+        """
+        轻量自动清理截图目录：
+        - 删除超过保留天数的文件
+        - 超过最大文件数时删除最旧文件
+        """
+        interval_sec = int(os.getenv("SCREENSHOT_CLEANUP_INTERVAL_SEC", "120"))
+        max_files = int(os.getenv("SCREENSHOT_MAX_FILES", "400"))
+        retention_days = int(os.getenv("SCREENSHOT_RETENTION_DAYS", "3"))
+
+        now = time.time()
+        last_ts = float(getattr(self, "_last_screenshot_cleanup_ts", 0.0) or 0.0)
+        if now - last_ts < max(10, interval_sec):
+            return
+        setattr(self, "_last_screenshot_cleanup_ts", now)
+
+        try:
+            p = Path(screenshot_dir)
+            p.mkdir(parents=True, exist_ok=True)
+            files = [f for f in p.glob("*.png") if f.is_file()]
+            if not files:
+                return
+
+            removed = 0
+            # 1) 删除过期文件
+            if retention_days > 0:
+                expire_before = now - retention_days * 86400
+                for f in files:
+                    try:
+                        if f.stat().st_mtime < expire_before:
+                            f.unlink(missing_ok=True)
+                            removed += 1
+                    except Exception:
+                        continue
+
+            # 2) 文件数超限时，删除最旧文件
+            files = [f for f in p.glob("*.png") if f.is_file()]
+            if max_files > 0 and len(files) > max_files:
+                files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                for f in files[max_files:]:
+                    try:
+                        f.unlink(missing_ok=True)
+                        removed += 1
+                    except Exception:
+                        continue
+
+            if removed > 0:
+                logger.info(
+                    f"🧹 [Screenshots] 自动清理完成: removed={removed}, keep_max={max_files}, retention_days={retention_days}"
+                )
+        except Exception as e:
+            logger.debug(f"[Screenshots] cleanup skipped: {e}")
+
     async def _capture_suspend_snapshot(self, page: Page, run_id: str, step_id: str) -> str:
         from datetime import datetime
-        screenshot_dir = "memory/workspace/screenshots"
+        screenshot_dir = "workspace/screenshots"
         os.makedirs(screenshot_dir, exist_ok=True)
+        self._remove_previous_screenshots(screenshot_dir, "suspend_")
+        self._cleanup_screenshot_cache(screenshot_dir)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_step = (step_id or "unknown").replace("/", "_").replace(" ", "_")
         screenshot_path = os.path.join(screenshot_dir, f"suspend_{run_id}_{safe_step}_{ts}.png")
@@ -37,8 +179,10 @@ class EngineSupportMixin:
         4) 右下角裁剪（常见浮层/确认弹窗区域）
         """
         from datetime import datetime
-        screenshot_dir = "memory/workspace/screenshots"
+        screenshot_dir = "workspace/screenshots"
         os.makedirs(screenshot_dir, exist_ok=True)
+        self._remove_previous_screenshots(screenshot_dir, "heal_")
+        self._cleanup_screenshot_cache(screenshot_dir)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_step = (step_id or "unknown").replace("/", "_").replace(" ", "_")
         prefix = os.path.join(screenshot_dir, f"heal_{run_id}_{safe_step}_{ts}")
@@ -303,12 +447,85 @@ class EngineSupportMixin:
         except Exception:
             return False
 
+    async def _dismiss_topmost_popup_once(self, page: Page) -> bool:
+        """
+        按 z-index 关闭当前最上层弹窗（仅一次）：
+        - 优先 X/close 控件
+        - 其次“关闭/跳过/我知道了/好的”
+        - 排除“下一步/上一步”
+        """
+        try:
+            selector = await page.evaluate(
+                """() => {
+                    const isVisible = (el) => {
+                        if (!el) return false;
+                        const s = window.getComputedStyle(el);
+                        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+                        const r = el.getBoundingClientRect();
+                        return r.width > 8 && r.height > 8;
+                    };
+                    const zScore = (el) => {
+                        const s = window.getComputedStyle(el);
+                        const z = parseInt(s.zIndex || '0', 10);
+                        return Number.isFinite(z) ? z : 0;
+                    };
+                    const bad = /下一步|上一步|next|previous/i;
+                    const goodText = /关闭|跳过|我知道了|知道了|好的|ok|got\\s*it|close|dismiss/i;
+                    const goodIcon = /close|okds-close|icon-close|dismiss/i;
+
+                    const nodes = Array.from(document.querySelectorAll(
+                        "dialog,[role='dialog'],[aria-modal='true'],.dex-dialog,.dex-dialog-container,[data-testid*='popup' i],[class*='modal' i]"
+                    )).filter(isVisible);
+                    if (!nodes.length) return '';
+
+                    nodes.sort((a, b) => zScore(b) - zScore(a));
+
+                    for (const root of nodes) {
+                        const clickables = Array.from(
+                            root.querySelectorAll("button,[role='button'],a,.icon-close,.dex-okds-close,.close")
+                        ).filter(isVisible);
+                        // 先找 close-like 控件
+                        for (const el of clickables) {
+                            const txt = ((el.innerText || el.textContent || '').trim());
+                            if (bad.test(txt)) continue;
+                            const cls = (el.className || '').toString();
+                            const aria = (el.getAttribute('aria-label') || '');
+                            const closeLike =
+                                txt === '×' || txt === '✕' || txt === 'x' || txt === 'X' ||
+                                goodText.test(txt) || goodIcon.test(cls) || goodIcon.test(aria);
+                            if (!closeLike) continue;
+                            el.setAttribute('data-hexa-topmost-close', '1');
+                            return '[data-hexa-topmost-close=\"1\"]';
+                        }
+                    }
+                    return '';
+                }"""
+            )
+            if not selector:
+                return False
+            await page.locator(selector).first.click(timeout=1800, force=True)
+            await page.wait_for_timeout(220)
+            return True
+        except Exception:
+            return False
+
     async def _dismiss_blocking_modal(self, page: Page) -> bool:
         """
         通用遮挡弹窗关闭器：
         - 优先关闭按钮（X/关闭/跳过）
         - 避免默认点击“下一步”导致教程链反复出现
         """
+        # 分层清理：最多连续关闭 4 层顶层弹窗
+        closed_any = False
+        for _ in range(4):
+            ok = await self._dismiss_topmost_popup_once(page)
+            if not ok:
+                break
+            closed_any = True
+        if closed_any:
+            logger.info("🧩 [ModalClose] 已按 z-index 连续关闭上层弹窗")
+            return True
+
         async def _click_candidates(candidates, *, forbidden_texts=None) -> bool:
             forbidden_texts = forbidden_texts or []
             for loc in candidates:
@@ -861,6 +1078,7 @@ class EngineSupportMixin:
             if m_aria:
                 txt = (m_aria.group(1) or "").strip()
         candidates = []
+        resolved_testids = []
 
         # 按你要求的执行优先级：
         # 1) get_by_role 2) get_by_text 3) get_by_test_id 4) css 5) xpath
@@ -890,17 +1108,31 @@ class EngineSupportMixin:
         if txt:
             candidates.append(page.get_by_text(txt, exact=False))
 
-        # get_by_test_id：从 selector 中提取 data-testid 或 data-testid
+        # get_by_test_id：从 selector 中提取 data-testid
         testid = ""
         m = re.search(r'data-testid\s*=\s*["\']([^"\']+)["\']', raw, re.IGNORECASE)
         if m:
             testid = (m.group(1) or "").strip()
-        if not testid:
-            m = re.search(r'data-testid\s*=\s*["\']([^"\']+)["\']', raw, re.IGNORECASE)
-            if m:
-                testid = (m.group(1) or "").strip()
         if testid:
-            candidates.append(page.get_by_test_id(testid))
+            resolved_testids.append(testid)
+        # 文本 selector 常见格式：[data-testid="xxx"] / [data-testid='xxx']
+        m_css_tid = re.search(r'\[\s*data-testid\s*=\s*["\']([^"\']+)["\']\s*\]', raw, re.IGNORECASE)
+        if m_css_tid:
+            tid = (m_css_tid.group(1) or "").strip()
+            if tid:
+                resolved_testids.append(tid)
+
+        # hexa-id 到 testid 运行时翻译：补一条 evaluate 映射候选
+        m_hexa_for_runtime = re.search(r'hexa-id\s*=\s*["\'](hexa-\d+)["\']', raw, re.IGNORECASE)
+        if not m_hexa_for_runtime:
+            m_hexa_for_runtime = re.search(r'\[id\s*=\s*["\'](hexa-\d+)["\']\]', raw, re.IGNORECASE)
+        if m_hexa_for_runtime:
+            hid = m_hexa_for_runtime.group(1)
+            candidates.insert(0, page.locator(f'[hexa-id="{hid}"]'))
+            candidates.insert(1, page.locator(f'[data-hexa-id="{hid}"]'))
+
+        for tid in list(dict.fromkeys([x for x in resolved_testids if x])):
+            candidates.append(page.get_by_test_id(tid))
 
         # css（不得已）
         if raw and not (raw.startswith("xpath=") or raw.startswith("//") or raw.startswith("(//")):
@@ -968,7 +1200,7 @@ class EngineSupportMixin:
                     cy = box["y"] + box["height"] / 2
                     # 移动鼠标过去并稍微晃动
                     await page.mouse.move(cx, cy)
-                    await page.wait_for_timeout(100)
+                    await page.wait_for_timeout(1000)
                     await page.mouse.click(cx, cy, delay=random.randint(40, 80))
                     # 坐标点击作为有效尝试
                     return True
@@ -991,6 +1223,21 @@ class EngineSupportMixin:
 
     async def _robust_click(self, page: Page, selector: str = "", preferred_locator=None):
         candidates = []
+        raw = (selector or "").strip()
+
+        # ref/hexa-id -> data-testid 映射（优先 get_by_test_id）
+        m_hexa = re.search(r'hexa-id\s*=\s*["\'](hexa-\d+)["\']', raw, re.IGNORECASE)
+        if not m_hexa:
+            m_hexa = re.search(r'\[id\s*=\s*["\'](hexa-\d+)["\']\]', raw, re.IGNORECASE)
+        if m_hexa:
+            hid = m_hexa.group(1)
+            try:
+                tid = await page.locator(f'[hexa-id="{hid}"]').first.get_attribute("data-testid")
+                if tid:
+                    candidates.append(page.get_by_test_id(tid))
+            except Exception:
+                pass
+
         if preferred_locator is not None:
             candidates.append(preferred_locator)
         candidates.extend(self._build_click_candidate_locators(page, selector))
@@ -998,4 +1245,18 @@ class EngineSupportMixin:
             ok = await self._try_click_locator(page, loc)
             if ok:
                 return
+
+        # 分层弹窗兜底：若上层弹窗遮挡，按 z-index 连续关闭后重试目标点击
+        for _ in range(3):
+            try:
+                dismissed = await self._dismiss_topmost_popup_once(page)
+            except Exception:
+                dismissed = False
+            if not dismissed:
+                break
+            await page.wait_for_timeout(1000)
+            for loc in candidates:
+                ok = await self._try_click_locator(page, loc)
+                if ok:
+                    return
         raise Exception(f"Robust click failed for selector: {selector}")

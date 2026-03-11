@@ -38,7 +38,7 @@ class RunEvent:
 class StateMachine:
     """Persist and recover replay progress for checkpoint resume."""
 
-    def __init__(self, db_path: str = "memory/workspace/state/runtime.db"):
+    def __init__(self, db_path: str = "workspace/state/runtime.db"):
         self.db = LocalDB(db_path=db_path)
         self._init_schema()
 
