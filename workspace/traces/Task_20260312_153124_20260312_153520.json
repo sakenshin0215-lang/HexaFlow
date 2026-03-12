@@ -1,0 +1,127 @@
+{
+  "task_name": "Task_20260312_153124",
+  "steps": [
+    {
+      "step_id": "step_1_navigate",
+      "description": "访问初始网页: https://www.okx.com/web3",
+      "pre_check": {
+        "expected_url_contains": "www.okx.com/web3",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "navigate",
+        "target": "https://www.okx.com/web3",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_2_click",
+      "description": "```json\n{\n  \"action_type\": \"click\",\n  \"selector\": \"a:has-text('行情')\"\n}\n```",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans",
+        "expected_dom_selector": "a:has-text('行情')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('行情')",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "行情",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "nav-link nav-item is-left current-active-nav nav-cefi-market"
+        }
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": "start",
+      "loop_name": "main_loop"
+    },
+    {
+      "step_id": "step_3_click",
+      "description": "根据任务要求，需要选择一个旁边有绿色小火箭（获得额外交易量）且大于等于50%的币种，且不能是RAVE。在当前页面中，RIVER旁边有绿色小火箭图标，并且其交易量增幅为+50%，符合筛选条件。因此，点击RIVER进入其详细页面。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token",
+        "expected_dom_selector": "a:has-text('RIVER')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('RIVER')",
+        "input_value": null,
+        "fingerprint": {
+          "tag_name": "a",
+          "text": "RIVER $351.46M +18.10%",
+          "aria_label": "",
+          "placeholder": "",
+          "classes": "dex-powerLink-a11y dex-powerLink H7zT0g__dex"
+        }
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_4_click",
+      "description": "```json\n{\n  \"action_type\": \"click\",\n  \"selector\": \"a:has-text('社媒热度')\"\n}\n```",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3",
+        "expected_dom_selector": "a:has-text('社媒热度')",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "click",
+        "target": "a:has-text('社媒热度')",
+        "input_value": null,
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": null,
+      "loop_name": null
+    },
+    {
+      "step_id": "step_5_call_tool",
+      "description": "用户目标是查看社媒热度下的热点媒体新闻并总结。当前页面已处于社媒热度标签页，且热点新闻（如Blave的帖子）已显示。下一步应调用工具对当前页面内容进行总结，以完成任务。",
+      "pre_check": {
+        "expected_url_contains": "web3.okx.com/zh-hans/token/bsc/0xda7ad9dea9397cffddae2f8a052b82f1484252b3#dt=vibes",
+        "expected_dom_selector": "body",
+        "timeout_ms": 5000
+      },
+      "action": {
+        "action_type": "call_tool",
+        "target": "summarize_page",
+        "input_value": "用户目标是查看社媒热度下的热点媒体新闻并总结。当前页面已处于社媒热度标签页，且热点新闻已显示。下一步应调用工具对当前页面内容进行总结(包括币价走势, 媒体热度, 关注点等)，以完成任务。",
+        "fingerprint": null
+      },
+      "post_check": null,
+      "is_optional": false,
+      "guard_url_contains": null,
+      "on_mismatch_actions": [],
+      "guard_retry_limit": 2,
+      "loop_marker": "end",
+      "loop_name": "main_loop"
+    }
+  ]
+}

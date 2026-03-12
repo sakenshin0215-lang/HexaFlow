@@ -1,18 +1,30 @@
 import asyncio
 import json
-import os
-from dotenv import load_dotenv
 
-from hexaflow.agents.heal_agent import AIHealAgent
+from hexaflow.agents.react_agent import ReActAgent
 from hexaflow.browser.cdp_runtime import CDPConfig
 from hexaflow.core.engine import HexaEngine
-from hexaflow.tools.runtime_config import load_runtime_config
-
-load_dotenv()
 
 async def main():
-    cfg, cfg_path = load_runtime_config()
-    task_spec_path = cfg["ai"]["task_spec_path"]
+    # ===== Main-level runtime config (no runtime_config loader) =====
+    task_spec_path = "workspace/task_specs/okx_web3_ai_token.json"
+    use_cdp = True
+    headless = False
+    cdp_user_data_dir = "/Users/kenshinnb/pw-profiles/okx-chrome"
+    cdp_profile = "Default"
+    ai_repair_only = True
+    ai_decision_use_vision = True
+    enabled_skill_ids = ["popup"]  # e.g. ["popup"] / [] to disable all skills
+    save_reports = False  # default off
+
+    # AI provider config: edit directly here when switching provider.
+    ai_provider = {
+        "provider": "openai_compatible",
+        "api_key": "ollama",
+        "base_url": "http://localhost:11434/v1",
+        "model_name": "qwen3-vl:8b-instruct",
+    }
+
     spec_start_url = "https://www.okx.com/web3"
     try:
         with open(task_spec_path, "r", encoding="utf-8") as f:
@@ -21,30 +33,22 @@ async def main():
     except Exception:
         pass
 
-    use_cdp = bool(cfg["browser"]["use_cdp"])
-    cdp_start_url = cfg["browser"]["cdp_start_url"] or spec_start_url
-    ai_repair_only = bool(cfg["ai"]["ai_repair_only"])
-    ai_decision_use_vision = bool(cfg["ai"]["decision_use_vision"])
+    cdp_start_url = spec_start_url
 
-    ai_agent = AIHealAgent(
-        api_key=os.getenv("OLLAMA_API_KEY", ""),
-        base_url=os.getenv("OLLAMA_BASE_URL", ""),
-        model_name=os.getenv("OLLAMA_MODEL", ""),
+    ai_agent = ReActAgent(
+        api_key=ai_provider["api_key"],
+        base_url=ai_provider["base_url"],
+        model_name=ai_provider["model_name"],
+        provider=ai_provider["provider"],
+        enabled_skill_ids=enabled_skill_ids,
     )
 
-    ai_agent_openai = AIHealAgent(
-        api_key=os.getenv("SILICONFLOW_API_KEY", ""),
-        base_url=os.getenv("SILICONFLOW_BASE_URL", ""),
-        model_name=os.getenv("SILICONFLOW_MODEL", ""),
-    )
-
-    engine = HexaEngine(headless=bool(cfg["browser"]["headless"]))
-    print(f"Using runtime config: {cfg_path}")
+    engine = HexaEngine(headless=headless, save_reports=save_reports)
     await engine.start(
         use_cdp=use_cdp,
         cdp_config=CDPConfig(
-            user_data_dir=cfg["browser"]["user_data_dir"],
-            profile_directory=cfg["browser"]["profile_directory"],
+            user_data_dir=cdp_user_data_dir,
+            profile_directory=cdp_profile,
         )
         if use_cdp
         else None,
@@ -61,11 +65,7 @@ async def main():
         )
         print("\nAI 全流程运行结果:")
         print(result)
-        if isinstance(result, dict):
-            ai_log = result.get("ai_action_log")
-            if ai_log:
-                print(f"🤖 AI操作日志(JSON): {ai_log.get('json_path')}")
-                print(f"🤖 AI操作日志(MD):   {ai_log.get('md_path')}")
+        engine.print_report_summary(result)
         input("\n执行完毕，按回车退出...")
     finally:
         await engine.stop()

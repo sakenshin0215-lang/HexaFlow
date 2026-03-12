@@ -41,7 +41,11 @@ class TraceRecorder:
         url_core = current_url.split("?")[0].replace("https://", "").replace("http://", "")
         step_id = f"step_{self.step_counter}_{action_type}"
         
-        dom_selector = "body" if action_type == "navigate" else (target if target else "body")
+        dom_selector = (
+            "body"
+            if action_type in ("navigate", "call_tool", "summarize")
+            else (target if target else "body")
+        )
             
         pre_check = PreCheck(
             expected_url_contains=url_core,

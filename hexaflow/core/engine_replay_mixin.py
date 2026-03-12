@@ -6,7 +6,7 @@ import re
 from playwright.async_api import Page
 
 from hexaflow.tools.dom_parser import DomParser
-from hexaflow.tools.token_selector import ensure_quote_token
+from hexaflow.browser.token_selector import ensure_quote_token
 from hexaflow.tools.helpers import build_recent_steps_text
 
 
@@ -250,6 +250,22 @@ class EngineReplayMixin:
                 await page.keyboard.press("Enter")
         elif act.action_type == "refresh":
             await page.reload(wait_until="domcontentloaded", timeout=15000)
+        elif act.action_type == "call_tool":
+            tool_name = (act.target or "").strip() or "summarize_page"
+            await self._execute_override_action(
+                page=page,
+                action_type="call_tool",
+                target=tool_name,
+                input_value=(act.input_value or step.description or ""),
+            )
+        elif act.action_type == "summarize":
+            # Backward compatibility for old traces.
+            await self._execute_override_action(
+                page=page,
+                action_type="call_tool",
+                target="summarize_page",
+                input_value=(act.input_value or step.description or ""),
+            )
         elif act.action_type == "wait_for_timeout":
             await page.wait_for_timeout(1000)
         elif act.action_type == "ensure_quote_token":
@@ -305,7 +321,6 @@ class EngineReplayMixin:
         trace_path: str,
         context=None,
         viewport: dict = None,
-        state_path: str = None,
         user_agent: str = None,
         resume: bool = True,
         suspend_on_failure: bool = True,
@@ -333,6 +348,9 @@ class EngineReplayMixin:
 
         blueprint = WorkflowBlueprint.model_validate_json(trace_data)
         logger.info(f"▶️ 开始回放任务: {blueprint.task_name} (共 {len(blueprint.steps)} 步)")
+        self._runtime_tool_agent = replay_repair_agent
+        self._runtime_tool_goal = f"Replay task: {blueprint.task_name}"
+        self._runtime_tool_history = ""
         if run_id:
             run_state = self.state_machine.resume_by_run_id(run_id)
             if run_state.trace_path != trace_path:
@@ -367,13 +385,6 @@ class EngineReplayMixin:
 
             if user_agent:
                 context_options["user_agent"] = user_agent
-
-            actual_state = state_path if state_path is not None else getattr(self, "state_path", None)
-            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
-                logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {actual_state}")
-                context_options["storage_state"] = actual_state
-            elif not self.use_cdp:
-                logger.info("✨ 未使用缓存，正以全新无痕环境启动...")
 
             context = await self._resolve_context(context=context, context_options=context_options)
 
@@ -651,6 +662,9 @@ class EngineReplayMixin:
                             self._finalize_element_monitor(run_state.run_id)
                             self._save_heal_log(heal_log)
                             self._save_run_report(run_state.run_id)
+                            self._runtime_tool_agent = None
+                            self._runtime_tool_goal = ""
+                            self._runtime_tool_history = ""
                             raise
                     else:
                         screenshot_path = await self._capture_suspend_snapshot(
@@ -673,6 +687,9 @@ class EngineReplayMixin:
                         self._finalize_element_monitor(run_state.run_id)
                         self._save_heal_log(heal_log)
                         self._save_run_report(run_state.run_id)
+                        self._runtime_tool_agent = None
+                        self._runtime_tool_goal = ""
+                        self._runtime_tool_history = ""
                         raise
 
         self.state_machine.mark_run_completed(run_state.run_id)
@@ -685,5 +702,8 @@ class EngineReplayMixin:
         if report_paths is not None:
             report_paths["heal_log"] = heal_paths
             report_paths["element_monitor"] = element_monitor_paths
+        self._runtime_tool_agent = None
+        self._runtime_tool_goal = ""
+        self._runtime_tool_history = ""
         self.disable_fallback_recovery_runtime = False
         return report_paths

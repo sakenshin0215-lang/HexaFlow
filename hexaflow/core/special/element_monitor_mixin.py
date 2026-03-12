@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime
 
-from hexaflow.tools.element_sidecar import ElementSidecarPanel
+from hexaflow.browser.element_sidecar import ElementSidecarPanel
 
 
 logger = logging.getLogger("HexaEngine")
@@ -356,6 +356,8 @@ class EngineElementMonitorMixin:
         )
 
     def _finalize_element_monitor(self, run_key: str):
+        if not getattr(self, "save_reports", False):
+            return {}
         if not hasattr(self, "_element_monitors"):
             return {}
         monitor = self._element_monitors.get(run_key)

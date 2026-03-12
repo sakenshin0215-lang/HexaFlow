@@ -510,6 +510,8 @@ class EngineAIHealMixin:
         return True
 
     def _save_run_report(self, run_id: str):
+        if not getattr(self, "save_reports", False):
+            return None
         try:
             report_paths = self.run_reporter.save_report(run_id)
             logger.info(
@@ -543,6 +545,8 @@ class EngineAIHealMixin:
         heal_log["records"].append(row)
 
     def _save_heal_log(self, heal_log: dict):
+        if not getattr(self, "save_reports", False):
+            return None
         if not heal_log:
             return None
         from datetime import datetime
@@ -583,6 +587,8 @@ class EngineAIHealMixin:
         return {"json_path": json_path, "md_path": md_path}
 
     def _save_ai_action_log(self, task_name: str, actions: list[dict]):
+        if not getattr(self, "save_reports", False):
+            return None
         from datetime import datetime
         os.makedirs("workspace/reports", exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

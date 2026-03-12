@@ -1,84 +1,64 @@
 # HexaFlow
 
-HexaFlow 是一个面向复杂网页流程的 AI 自动化引擎，支持：
-1. 动态 AI 执行（按目标推进，不是纯脚本）
-2. 人工示教录制 + 轨迹回放
-3. 循环任务（成功才计次）
-4. CDP 复用真实 Chrome Profile（登录态、扩展、钱包）
+HexaFlow 是一个面向复杂网页流程的 AI 自动化框架，核心目标是：
 
-## 入口脚本
+1. 在真实浏览器环境里稳定执行网页任务
+2. 支持 AI 动态决策、人工示教录制、确定性回放、循环执行
+3. 内置失败自愈（AI 修复）与可扩展 Skill 机制
 
-1. `main_ai.py`：AI 全流程执行（TaskSpec）
-2. `main_record.py`：人工示教录制
-3. `main_replay.py`：轨迹回放
-4. `main_loop.py`：循环任务执行
+本项目当前以 `README.md` 作为唯一文档入口。`docs/` 目录不再作为主维护文档。
 
-## 统一配置（推荐）
+## 核心能力
 
-默认读取：`workspace/config/runtime.json`
+1. `main_ai.py`：AI 动态任务执行（按 TaskSpec 自动推进）
+2. `main_record.py`：人工示教录制（生成 trace）
+3. `main_replay.py`：按 trace 回放（可叠加 AI 修复）
+4. `main_loop.py`：按 trace 循环执行（成功才计次）
+5. CDP 复用本地 Chrome Profile（扩展、钱包、登录态都可复用）
+6. 核心 Agent + Skills 架构（`ReActAgent` + skill registry）
+7. Tool 调用机制（`call_tool`），支持将“总结类动作”标准化并可回放
 
-可选覆盖：
-- `RUNTIME_CONFIG_PATH=/path/to/your_runtime.json`
+## 架构概览
 
-### 配置结构（重点）
+### 1) Core
 
-```json
-{
-  "agent_profile": "ollama",
-  "agent_ollama": {
-    "api_key": "ollama",
-    "base_url": "http://localhost:11434/v1",
-    "model_name": "qwen3-vl:8b-instruct"
-  },
-  "agent_openai": {
-    "api_key": "",
-    "base_url": "https://api.openai.com/v1",
-    "model_name": "gpt-4.1-mini"
-  }
-}
-```
+1. `hexaflow/core/engine.py`：总控引擎装配
+2. `engine_dynamic_mixin.py`：动态任务执行
+3. `engine_replay_mixin.py`：回放执行
+4. `engine_loop_mixin.py`：循环执行
+5. `engine_record_mixin.py`：示教录制
+6. `core/special/*`：AI 修复、恢复链路、元素监控等
 
-运行时会把选中的 profile 注入为统一的 `agent`（`main_*` 无需区分）。
+### 2) Agent
 
-## 本地模型 / OpenAI 切换
+1. 核心 Agent：`hexaflow/agents/react_agent.py`
+2. LLM 适配：`hexaflow/agents/llm_gateway.py`
+3. Skill 路由：`hexaflow/agents/special_agents.py`
+4. Skill 注册表：`hexaflow/agents/skills/registry.py`
 
-### 1) 用配置文件切换
+### 3) Browser / Tools
 
-修改 `runtime.json`：
-- `"agent_profile": "ollama"` 或 `"openai"`
+1. `hexaflow/browser/`：CDP、token_selector、sidecar 等浏览器相关能力
+2. `hexaflow/tools/`：通用辅助工具（DOM 解析、helpers、tool runtime）
 
-### 2) 用环境变量切换
+### 4) Workspace
 
-```bash
-export AGENT_PROFILE=ollama
-# 或
-export AGENT_PROFILE=openai
-```
+1. `workspace/traces/`：录制轨迹
+2. `workspace/task_specs/`：任务 DSL
+3. `workspace/screenshots/`：截图缓存
+4. `workspace/reports/`：报告输出（可关闭）
+5. `workspace/state/`：运行时状态数据库
 
-### 3) 按 profile 覆盖参数
+## 快速开始
 
-Ollama：
-```bash
-export AGENT_OLLAMA_API_KEY=ollama
-export AGENT_OLLAMA_BASE_URL=http://localhost:11434/v1
-export AGENT_OLLAMA_MODEL=qwen3-vl:8b-instruct
-```
+## 环境要求
 
-OpenAI：
-```bash
-export AGENT_OPENAI_API_KEY=sk-xxx
-export AGENT_OPENAI_BASE_URL=https://api.openai.com/v1
-export AGENT_OPENAI_MODEL=gpt-4.1-mini
-```
+1. Python 3.12+
+2. 已安装 Playwright 依赖浏览器
+3. 本地或远程 OpenAI-Compatible 模型服务（如 Ollama）
+4. 若使用 CDP：本机已安装 Chrome
 
-兼容旧变量（作用于当前 profile）：
-```bash
-export AI_API_KEY=...
-export AI_BASE_URL=...
-export AI_MODEL=...
-```
-
-## 安装与运行
+## 安装
 
 ```bash
 python3 -m venv .venv
@@ -87,7 +67,8 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-运行：
+## 运行入口
+
 ```bash
 python3 main_ai.py
 python3 main_record.py
@@ -95,28 +76,219 @@ python3 main_replay.py
 python3 main_loop.py
 ```
 
-## 浏览器/CDP
+## CDP 使用（推荐）
 
-`runtime.json` 的 `browser` 段控制：
-1. `use_cdp`：是否走 CDP
-2. `user_data_dir`：Chrome 用户数据目录
-3. `profile_directory`：如 `Default`
-4. `cdp_start_url`：CDP 启动后的起始页
+HexaFlow 默认支持 CDP 连接本地 Chrome，复用真实 profile。
 
-## 工作目录
+在各 `main_*.py` 中配置：
 
-项目数据统一在 `workspace/`：
-1. `workspace/traces`：录制轨迹
-2. `workspace/task_specs`：任务定义
-3. `workspace/reports`：执行报告
-4. `workspace/screenshots`：运行截图
-5. `workspace/state`：运行状态数据库
+1. `use_cdp = True`
+2. `cdp_user_data_dir = "/path/to/your/chrome-user-data"`
+3. `cdp_profile = "Default"`
+
+引擎会连接 `http://127.0.0.1:9222`（可通过 `CDPConfig` 或环境变量修改）。
+
+## 四个主入口如何用
+
+### 1) `main_ai.py`（动态任务）
+
+适合“给目标，AI 自己走流程”。
+
+最小配置：
+
+1. `task_spec_path`
+2. `ai_provider`（模型地址与模型名）
+3. `enabled_skill_ids`
+4. `save_reports`
+
+### 2) `main_record.py`（示教录制）
+
+适合“人工点一遍，沉淀可回放 trace”。
+
+录制会生成：
+
+1. `workspace/traces/ManualTask_*.json`
+
+### 3) `main_replay.py`（确定性回放）
+
+适合“严格按 trace 跑”。
+
+可配：
+
+1. `enable_ai_repair`
+2. `ai_repair_only`
+
+### 4) `main_loop.py`（循环任务）
+
+适合“某段流程重复执行 N 次，失败重试直到成功”。
+
+循环范围由 trace 内 `loop_marker=start/end` 定义。
+
+## main 里常用开关说明（你说的“按钮配置”）
+
+下面这些都在 `main_*.py` 顶部配置块里改，平时最常用：
+
+1. `use_cdp`：是否使用 CDP 连接本地浏览器
+2. `headless`：仅非 CDP launch 时有效
+3. `enabled_skill_ids`：启用哪些 skill
+   - `['popup']`：开启弹窗 skill
+   - `[]`：关闭所有 skill
+4. `save_reports`：是否写入 `workspace/reports`
+   - 默认建议 `False`
+5. `enable_ai_repair`：是否启用 AI 修复
+6. `ai_repair_only`：是否禁用传统回退，只走 AI 修复
+7. `ai_decision_use_vision`：动态任务决策时是否带截图
+8. `repair_context_window`：修复时传入最近步骤窗口
+
+## AI Provider 配置
+
+每个 main 里都有：
+
+```python
+ai_provider = {
+  "provider": "openai_compatible",
+  "api_key": "ollama",
+  "base_url": "http://localhost:11434/v1",
+  "model_name": "qwen3-vl:8b-instruct",
+}
+```
+
+可切换为任意 OpenAI-Compatible 代理商/网关，只要接口兼容。
+
+## TaskSpec 配置详解
+
+TaskSpec 定义在 `workspace/task_specs/*.json`，核心字段如下：
+
+1. `task_name`：任务名
+2. `goal`：任务目标（最关键）
+3. `notes`：约束说明
+4. `start_url`：起始 URL
+5. `manual_review`：是否人工验收每一步
+6. `max_steps`：最大步数
+7. `allowed_domains`：导航白名单
+8. `blocked_keywords`：动作黑名单关键字
+9. `completion_logic`：`any` / `all`
+10. `completion_checks`：硬完成判定（可选）
+11. `allow_repeat_summarize`：是否允许同页重复总结（默认 false）
+12. `failure_policy`
+    - `mode`: `continue` / `stop`
+    - `max_consecutive_failures`
+13. `loop_policy`
+    - `enabled`
+    - `loop_name`
+    - `iterations`
+    - `max_iteration_retries`
+
+### completion_checks 什么时候需要
+
+1. 可不写：让 AI 自主判断 `done`
+2. 建议写：高价值任务、容易误判完成的任务
+
+示例：
+
+```json
+"completion_checks": [
+  {
+    "check_type": "action_target_contains",
+    "action_type": "click",
+    "value": "买入"
+  }
+],
+"completion_logic": "any"
+```
+
+## 动作类型（Action Types）
+
+核心动作见 `hexaflow/agents/schemas.py`：
+
+1. `navigate`
+2. `click`
+3. `type`
+4. `click_type_enter`
+5. `press_enter`
+6. `refresh`
+7. `call_tool`
+8. `done`
+
+历史兼容：`summarize` 仍可读，但建议统一用 `call_tool`。
+
+## Tool 调用机制（重点）
+
+### 为什么要 `call_tool`
+
+把“总结/分析”从普通页面动作中抽离，避免和 DOM 点击混淆，并可稳定回放。
+
+### 当前内置工具
+
+1. `summarize_page`
+
+### 使用方式
+
+AI 返回：
+
+```json
+{
+  "action_type": "call_tool",
+  "target": "summarize_page",
+  "input_value": "请总结热点媒体观点和风险"
+}
+```
+
+执行与回放规则：
+
+1. 动态执行时后台调用工具
+2. 会记录 `step_x_call_tool`
+3. 首次会把工具指令固化到 trace 的 `action.input_value`
+4. replay 会复用同一工具和同一指令
+5. 旧 trace 的 `summarize` 自动映射为 `call_tool:summarize_page`
+
+## Skill 机制
+
+Skill 采用“注册表 + 路由”而非运行时文件扫描。
+
+1. 注册表：`hexaflow/agents/skills/registry.py`
+2. 路由器：`hexaflow/agents/special_agents.py`
+3. 当前默认 skill：`popup`
+
+你可在 main 中用 `enabled_skill_ids` 动态启停。
+
+## 报告与产物
+
+当 `save_reports=True` 时会产出：
+
+1. run report（JSON/MD）
+2. heal log（JSON/MD）
+3. ai action log（JSON/MD）
+4. element monitor（JSON/MD）
+
+当 `save_reports=False`（默认）时不写这些文件。
 
 ## 常见问题
 
-1. 报错 `model is required`
-   - 检查选中的 profile 是否有 `model_name`
-   - 避免把 `AI_MODEL` / `AGENT_*_MODEL` 设为空字符串
+### 1) loop 里 `call_tool` 没走模型，只输出降级总结
 
-2. 为什么 main 要求的参数变少了
-   - 现在统一从 `runtime.json` 读取，main 只负责启动流程
+通常是没有把可用 agent 传给 loop/replay 修复链路。请确认：
+
+1. `enable_ai_repair = True`
+2. `repair_agent = ReActAgent(...)`
+3. `run_loop_task_from_spec(..., replay_repair_agent=repair_agent)`
+
+### 2) 为什么动作成功了但看起来页面没变化
+
+`call_tool` 属于“非 DOM 变化动作”，成功不依赖页面变化。
+
+### 3) 是否还需要 auth_state
+
+不需要。当前已移除 `auth_state/storage_state` 流程，CDP 直接复用本地浏览器 profile。
+
+## 最小实战流程（推荐）
+
+1. 用 `main_record.py` 示教一次流程
+2. 在 trace 中标记 loop start/end（可选）
+3. 用 `main_replay.py` 验证稳定性
+4. 用 `main_loop.py` 批量跑
+5. 需要开放探索时使用 `main_ai.py`
+
+---
+
+如需新增 skill/tool，建议先在 `agents/skills/registry.py` 或 `tools/tool_runtime.py` 增量注册，再接到 `ReActAgent` 输出规范中。

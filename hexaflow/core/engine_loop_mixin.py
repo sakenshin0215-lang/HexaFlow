@@ -177,7 +177,6 @@ class EngineLoopMixin:
         max_iteration_retries: int = 30,
         context=None,
         viewport: dict = None,
-        state_path: str = None,
         user_agent: str = None,
         human_handoff_on_auth: bool = True,
         replay_repair_agent=None,
@@ -226,6 +225,9 @@ class EngineLoopMixin:
             f"🔁 循环任务启动: run_id={run_state.run_id} loop={loop_name} "
             f"range=[{loop_start}, {loop_end}] iterations={loop_iterations}"
         )
+        self._runtime_tool_agent = replay_repair_agent
+        self._runtime_tool_goal = f"Loop task: {blueprint.task_name}::{loop_name}"
+        self._runtime_tool_history = ""
         self._init_element_monitor(
             run_key=run_state.run_id,
             task_name=f"{blueprint.task_name}::loop({loop_name})",
@@ -237,9 +239,6 @@ class EngineLoopMixin:
             context_options = {"viewport": vp}
             if user_agent:
                 context_options["user_agent"] = user_agent
-            actual_state = state_path if state_path is not None else getattr(self, "state_path", None)
-            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
-                context_options["storage_state"] = actual_state
             context = await self._resolve_context(context=context, context_options=context_options)
 
         page = await context.new_page()
@@ -357,6 +356,9 @@ class EngineLoopMixin:
             element_monitor_paths = self._finalize_element_monitor(run_state.run_id)
             report_paths = self._save_run_report(run_state.run_id)
             logger.info("🎉 循环任务执行完成")
+            self._runtime_tool_agent = None
+            self._runtime_tool_goal = ""
+            self._runtime_tool_history = ""
             self.disable_fallback_recovery_runtime = False
             return {
                 "completed_loops": completed_loops,
@@ -378,6 +380,9 @@ class EngineLoopMixin:
             self._finalize_element_monitor(run_state.run_id)
             self._save_heal_log(heal_log)
             self._save_run_report(run_state.run_id)
+            self._runtime_tool_agent = None
+            self._runtime_tool_goal = ""
+            self._runtime_tool_history = ""
             self.disable_fallback_recovery_runtime = False
             raise
 

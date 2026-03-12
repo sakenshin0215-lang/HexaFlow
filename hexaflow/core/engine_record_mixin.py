@@ -1,4 +1,3 @@
-import os
 import logging
 from playwright.async_api import BrowserContext
 
@@ -21,10 +20,6 @@ class EngineRecordMixin:
         
         if not context:
             context_options = {'viewport': {'width': 1280, 'height': 800}}
-            actual_state = getattr(self, 'state_path', None)
-            if (not self.use_cdp) and actual_state and os.path.exists(actual_state):
-                logger.info(f"🍪 发现缓存！加载本地浏览器状态: {actual_state}")
-                context_options['storage_state'] = actual_state
             context = await self._resolve_context(context=context, context_options=context_options)
             
         page = await context.new_page()
@@ -191,9 +186,6 @@ class EngineRecordMixin:
             if user_input in ['done', 'd', 'quit']:
                 logger.info("🛑 示教录制结束，正在保存轨迹...")
                 recorder.save_to_disk()
-                if getattr(self, 'state_path', None):
-                    os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-                    await context.storage_state(path=self.state_path)
                 break
                 
             elif user_input in ['y', 'o', '', 'ls', 'le']:

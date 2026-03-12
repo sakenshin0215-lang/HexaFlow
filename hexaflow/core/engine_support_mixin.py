@@ -15,6 +15,15 @@ logger = logging.getLogger("HexaEngine")
 
 
 class EngineSupportMixin:
+    def _get_popup_skill_agent(self):
+        agent = getattr(self, "_popup_skill_agent", None)
+        if agent is None:
+            from hexaflow.agents.skills.popup import PopupSkillAgent
+
+            agent = PopupSkillAgent()
+            setattr(self, "_popup_skill_agent", agent)
+        return agent
+
     @staticmethod
     def _canonicalize_runtime_target(target: str) -> str:
         t = (target or "").strip()
@@ -448,365 +457,16 @@ class EngineSupportMixin:
             return False
 
     async def _dismiss_topmost_popup_once(self, page: Page) -> bool:
-        """
-        按 z-index 关闭当前最上层弹窗（仅一次）：
-        - 优先 X/close 控件
-        - 其次“关闭/跳过/我知道了/好的”
-        - 排除“下一步/上一步”
-        """
-        try:
-            selector = await page.evaluate(
-                """() => {
-                    const isVisible = (el) => {
-                        if (!el) return false;
-                        const s = window.getComputedStyle(el);
-                        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-                        const r = el.getBoundingClientRect();
-                        return r.width > 8 && r.height > 8;
-                    };
-                    const zScore = (el) => {
-                        const s = window.getComputedStyle(el);
-                        const z = parseInt(s.zIndex || '0', 10);
-                        return Number.isFinite(z) ? z : 0;
-                    };
-                    const bad = /下一步|上一步|next|previous/i;
-                    const goodText = /关闭|跳过|我知道了|知道了|好的|ok|got\\s*it|close|dismiss/i;
-                    const goodIcon = /close|okds-close|icon-close|dismiss/i;
-
-                    const nodes = Array.from(document.querySelectorAll(
-                        "dialog,[role='dialog'],[aria-modal='true'],.dex-dialog,.dex-dialog-container,[data-testid*='popup' i],[class*='modal' i]"
-                    )).filter(isVisible);
-                    if (!nodes.length) return '';
-
-                    nodes.sort((a, b) => zScore(b) - zScore(a));
-
-                    for (const root of nodes) {
-                        const clickables = Array.from(
-                            root.querySelectorAll("button,[role='button'],a,.icon-close,.dex-okds-close,.close")
-                        ).filter(isVisible);
-                        // 先找 close-like 控件
-                        for (const el of clickables) {
-                            const txt = ((el.innerText || el.textContent || '').trim());
-                            if (bad.test(txt)) continue;
-                            const cls = (el.className || '').toString();
-                            const aria = (el.getAttribute('aria-label') || '');
-                            const closeLike =
-                                txt === '×' || txt === '✕' || txt === 'x' || txt === 'X' ||
-                                goodText.test(txt) || goodIcon.test(cls) || goodIcon.test(aria);
-                            if (!closeLike) continue;
-                            el.setAttribute('data-hexa-topmost-close', '1');
-                            return '[data-hexa-topmost-close=\"1\"]';
-                        }
-                    }
-                    return '';
-                }"""
-            )
-            if not selector:
-                return False
-            await page.locator(selector).first.click(timeout=1800, force=True)
-            await page.wait_for_timeout(220)
-            return True
-        except Exception:
-            return False
+        agent = self._get_popup_skill_agent()
+        return await agent.dismiss_topmost_popup_once(page)
 
     async def _dismiss_blocking_modal(self, page: Page) -> bool:
-        """
-        通用遮挡弹窗关闭器：
-        - 优先关闭按钮（X/关闭/跳过）
-        - 避免默认点击“下一步”导致教程链反复出现
-        """
-        # 分层清理：最多连续关闭 4 层顶层弹窗
-        closed_any = False
-        for _ in range(4):
-            ok = await self._dismiss_topmost_popup_once(page)
-            if not ok:
-                break
-            closed_any = True
-        if closed_any:
-            logger.info("🧩 [ModalClose] 已按 z-index 连续关闭上层弹窗")
-            return True
-
-        async def _click_candidates(candidates, *, forbidden_texts=None) -> bool:
-            forbidden_texts = forbidden_texts or []
-            for loc in candidates:
-                try:
-                    count = await loc.count()
-                except Exception:
-                    continue
-                count = min(count, 8)
-                for i in range(count):
-                    cand = loc.nth(i)
-                    try:
-                        if not await cand.is_visible():
-                            continue
-                        text = ((await cand.inner_text()) or "").strip()
-                        if any(t.lower() in text.lower() for t in forbidden_texts if t):
-                            continue
-                        await cand.scroll_into_view_if_needed(timeout=800)
-                        await cand.click(timeout=2200, force=True)
-                        await page.wait_for_timeout(250)
-                        return True
-                    except Exception:
-                        continue
-            return False
-
-        # 规则0：优先处理“最上层弹窗”的关闭意图，避免点到页面底层同名元素
-        try:
-            dialog_roots = page.locator(
-                "dialog,[role='dialog'],[aria-modal='true'],.dex-dialog,.dex-dialog-container"
-            )
-            root_count = min(await dialog_roots.count(), 6)
-            roots_with_box = []
-            for i in range(root_count):
-                root = dialog_roots.nth(i)
-                try:
-                    if not await root.is_visible():
-                        continue
-                    box = await root.bounding_box()
-                    if not box:
-                        continue
-                    area = float(box.get("width", 0)) * float(box.get("height", 0))
-                    roots_with_box.append((area, root, box))
-                except Exception:
-                    continue
-
-            # 大弹窗优先（通常遮挡最强）
-            roots_with_box.sort(key=lambda x: x[0], reverse=True)
-
-            for _, root, box in roots_with_box:
-                forbidden = ["下一步", "上一步", "Next", "Previous"]
-
-                # A. 最稳健：close aria / class / icon close
-                if await _click_candidates(
-                    [
-                        root.locator("button[aria-label*='close' i],button[aria-label*='关闭' i]"),
-                        root.locator("[role='button'][aria-label*='close' i],[role='button'][aria-label*='关闭' i]"),
-                        root.locator("button:has(i[class*='close' i]),button:has(i[class*='okds-close' i])"),
-                        root.locator("button:has(svg[class*='close' i]),button:has(svg[aria-label*='close' i])"),
-                        root.locator("button[class*='close' i],.icon-close,.dex-okds-close,.close"),
-                    ],
-                    forbidden_texts=forbidden,
-                ):
-                    logger.info("🧩 [ModalClose] 已命中弹窗关闭按钮(X/close)")
-                    return True
-
-                # B. 文案关闭（不包含下一步/上一步）
-                if await _click_candidates(
-                    [
-                        root.get_by_role("button", name="关闭", exact=False),
-                        root.get_by_role("button", name="跳过", exact=False),
-                        root.get_by_role("button", name="Skip", exact=False),
-                        root.get_by_role("button", name="Close", exact=False),
-                    ],
-                    forbidden_texts=forbidden,
-                ):
-                    logger.info("🧩 [ModalClose] 已命中文案关闭按钮")
-                    return True
-
-                # C. 无显式关闭时，接受“我知道了/知道了/Got it”作为低优先级兜底
-                if await _click_candidates(
-                    [
-                        root.get_by_role("button", name="我知道了", exact=False),
-                        root.get_by_role("button", name="知道了", exact=False),
-                        root.get_by_role("button", name="Got it", exact=False),
-                    ],
-                    forbidden_texts=forbidden,
-                ):
-                    logger.info("🧩 [ModalClose] 未找到X，已使用“我知道了/知道了”兜底")
-                    return True
-
-                # D. 最后兜底：点击弹窗框体右上角（常见 X 位置）
-                try:
-                    x = float(box["x"]) + float(box["width"]) - min(28.0, float(box["width"]) * 0.04)
-                    y = float(box["y"]) + min(22.0, float(box["height"]) * 0.08)
-                    await page.mouse.click(x, y, delay=50)
-                    await page.wait_for_timeout(220)
-                    logger.info("🧩 [ModalClose] 已点击弹窗右上角坐标兜底")
-                    return True
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # 规则1（高优先级）：
-        # 若检测到教程/引导弹窗（含“下一步/上一步”），强制点右上角关闭（X），绝不点下一步。
-        try:
-            guide_close_selector = await page.evaluate(
-                """() => {
-                    const isVisible = (el) => {
-                        if (!el) return false;
-                        const s = window.getComputedStyle(el);
-                        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-                        const r = el.getBoundingClientRect();
-                        return r.width > 12 && r.height > 12;
-                    };
-                    const hasGuideText = (el) => {
-                        const t = (el.innerText || '').replace(/\\s+/g, ' ');
-                        return /下一步|上一步|Next|Previous/i.test(t);
-                    };
-                    const dialogRoots = Array.from(document.querySelectorAll('dialog,[role=\"dialog\"],[aria-modal=\"true\"],.dex-dialog'));
-                    const guide = dialogRoots.find((d) => isVisible(d) && hasGuideText(d));
-                    if (!guide) return '';
-
-                    const closeCandidates = guide.querySelectorAll(
-                        \"button[aria-label*='close' i],button[aria-label*='关闭' i],[role='button'][aria-label*='close' i],[role='button'][aria-label*='关闭' i],button:has(i),button:has(svg),.icon-close,.close\"
-                    );
-                    for (const el of closeCandidates) {
-                        if (!isVisible(el)) continue;
-                        const txt = (el.innerText || '').trim();
-                        if (/下一步|上一步|next|previous/i.test(txt)) continue;
-                        if (txt === '×' || txt === '✕' || txt === 'x' || txt === 'X' || txt === '' || /关闭|close/i.test(txt)) {
-                            el.setAttribute('data-hexa-guide-close', '1');
-                            return '[data-hexa-guide-close=\"1\"]';
-                        }
-                    }
-                    return '';
-                }"""
-            )
-            if guide_close_selector:
-                try:
-                    await page.locator(guide_close_selector).first.click(timeout=2000, force=True)
-                    await page.wait_for_timeout(300)
-                    logger.info("🧩 [ModalClose] 检测到教程弹窗，已优先点击右上角关闭")
-                    return True
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # 规则1兜底：检测到教程弹窗但未命中关闭按钮时，点击弹窗框体右上角。
-        try:
-            click_point = await page.evaluate(
-                """() => {
-                    const isVisible = (el) => {
-                        if (!el) return false;
-                        const s = window.getComputedStyle(el);
-                        if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-                        const r = el.getBoundingClientRect();
-                        return r.width > 40 && r.height > 40;
-                    };
-                    const hasGuideText = (el) => {
-                        const t = (el.innerText || '').replace(/\\s+/g, ' ');
-                        return /下一步|上一步|Next|Previous/i.test(t);
-                    };
-                    const roots = Array.from(document.querySelectorAll('dialog,[role=\"dialog\"],[aria-modal=\"true\"],.dex-dialog'));
-                    const guide = roots.find((d) => isVisible(d) && hasGuideText(d));
-                    if (!guide) return null;
-                    const r = guide.getBoundingClientRect();
-                    return {
-                        x: Math.max(8, Math.min(window.innerWidth - 8, r.right - Math.min(32, r.width * 0.04))),
-                        y: Math.max(8, Math.min(window.innerHeight - 8, r.top + Math.min(26, r.height * 0.08))),
-                    };
-                }"""
-            )
-            if click_point and isinstance(click_point, dict):
-                x = float(click_point.get("x", 0))
-                y = float(click_point.get("y", 0))
-                if x > 0 and y > 0:
-                    await page.mouse.click(x, y, delay=50)
-                    await page.wait_for_timeout(300)
-                    logger.info("🧩 [ModalClose] 教程弹窗未命中按钮，已点击弹窗右上角关闭区域")
-                    return True
-        except Exception:
-            pass
-
-        # 规则1.5：通用 Esc 关闭（很多弹窗支持）
-        try:
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(180)
-        except Exception:
-            pass
-
-        close_selectors = [
-            "button:has-text('关闭')",
-            "button:has-text('跳过')",
-            "button:has-text('Skip')",
-            "button[aria-label*='close' i]",
-            "button[aria-label*='关闭' i]",
-            "[role='button'][aria-label*='close' i]",
-            "[role='button'][aria-label*='关闭' i]",
-            "i[aria-label*='close' i]",
-            "i[aria-label*='关闭' i]",
-            ".icon-close",
-            ".close",
-        ]
-        # 明确排除“下一步”
-        forbidden = ["下一步", "Next"]
-
-        for sel in close_selectors:
-            try:
-                loc = page.locator(sel)
-                count = await loc.count()
-                for i in range(count):
-                    cand = loc.nth(i)
-                    if not await cand.is_visible():
-                        continue
-                    text = (await cand.inner_text() or "").strip()
-                    if any(k in text for k in forbidden):
-                        continue
-                    try:
-                        await cand.scroll_into_view_if_needed(timeout=800)
-                    except Exception:
-                        pass
-                    await cand.click(timeout=2500, force=True)
-                    await page.wait_for_timeout(400)
-                    return True
-            except Exception:
-                continue
-
-        # 特殊兜底：尝试点击视口右上角（常见 X 位置）
-        try:
-            vp = page.viewport_size or {}
-            w = int(vp.get("width", 0))
-            h = int(vp.get("height", 0))
-            if w > 120 and h > 120:
-                x = int(w * 0.93)
-                y = int(h * 0.12)
-                await page.mouse.click(x, y, delay=60)
-                await page.wait_for_timeout(350)
-                return True
-        except Exception:
-            pass
-        return False
+        agent = self._get_popup_skill_agent()
+        return await agent.dismiss_blocking_modal(page)
 
     async def _try_popup_healer(self, page: Page) -> bool:
-        if not self.enable_popup_healer:
-            return False
-        try:
-            if self.popup_healer is None:
-                from hexaflow.tools.popup_healer import PopupHealer
-
-                model = (
-                    os.getenv("POPUP_HEALER_MODEL")
-                    or os.getenv("REPLAY_REPAIR_MODEL")
-                    or os.getenv("OPENAI_MODEL")
-                )
-                api_key = (
-                    os.getenv("POPUP_HEALER_API_KEY")
-                    or os.getenv("REPLAY_REPAIR_API_KEY")
-                    or os.getenv("OPENAI_API_KEY")
-                    or "dummy"
-                )
-                base_url = (
-                    os.getenv("POPUP_HEALER_BASE_URL")
-                    or os.getenv("REPLAY_REPAIR_BASE_URL")
-                    or os.getenv("OPENAI_BASE_URL")
-                )
-                self.popup_healer = PopupHealer(
-                    model_name="openai/gpt-oss-120b",
-                    api_key=os.getenv("POPUP_HEALER_APIKEY"),
-                    base_url=os.getenv("POPUP_HEALER_BASE_URL"),
-                )
-            logger.info("🧰 [PopupHealer] 尝试清理遮挡弹窗...")
-            ok = await self.popup_healer.heal(page)
-            if ok:
-                logger.info("✅ [PopupHealer] 弹窗助手处理成功")
-                return True
-            logger.info("ℹ️ [PopupHealer] 未成功处理，转 AI 修复")
-            return False
-        except Exception as e:
-            logger.warning(f"⚠️ [PopupHealer] 调用失败，转 AI 修复: {e}")
-            return False
+        agent = self._get_popup_skill_agent()
+        return await agent.try_popup_healer(page, enabled=self.enable_popup_healer)
 
     async def _selector_to_click_ratio(self, page: Page, selector: str):
         """
@@ -1057,18 +717,8 @@ class EngineSupportMixin:
         return False
 
     async def _is_target_text_inside_dialog(self, page: Page, target: str) -> bool:
-        txt = self._extract_text_hint_from_selector(target)
-        if not txt:
-            return False
-        try:
-            dialog_selector = (
-                f'dialog:has-text("{txt}"), '
-                f'[role="dialog"]:has-text("{txt}"), '
-                f'[aria-modal="true"]:has-text("{txt}")'
-            )
-            return await page.locator(dialog_selector).first.is_visible(timeout=400)
-        except Exception:
-            return False
+        agent = self._get_popup_skill_agent()
+        return await agent.is_target_text_inside_dialog(page, target)
 
     def _build_click_candidate_locators(self, page: Page, selector: str):
         raw = (selector or "").strip()

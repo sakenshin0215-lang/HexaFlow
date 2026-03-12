@@ -13,12 +13,23 @@ from hexaflow.tools.helpers import (
     contains_blocked_keyword,
     is_domain_allowed,
 )
+from hexaflow.tools.tool_runtime import execute_tool
 
 
 logger = logging.getLogger("HexaEngine")
 
 
 class EngineDynamicMixin:
+    @staticmethod
+    def _is_summary_tool_action(next_action) -> bool:
+        at = (getattr(next_action, "action_type", "") or "").strip().lower()
+        tg = (getattr(next_action, "target", "") or "").strip().lower()
+        if at == "summarize":
+            return True
+        if at == "call_tool" and tg in ("summarize_page", "summarize", ""):
+            return True
+        return False
+
     @staticmethod
     def _normalize_action_target_for_memory(target: str) -> str:
         t = (target or "").strip()
@@ -258,6 +269,7 @@ class EngineDynamicMixin:
         blocked_target_norms: set[str],
         invalid_targets: dict[str, dict],
         state_cycle_detected: bool,
+        summarized_state_count: int = 0,
     ) -> list[str]:
         lines = []
         blocked_brief = self._format_blocked_action_keys(blocked_action_keys, limit=8)
@@ -282,6 +294,11 @@ class EngineDynamicMixin:
                 "[CONTEXT_GUARD] State-cycle detected (ABAB/AAAA). "
                 "Choose a fundamentally different action path; do NOT repeat previous entry buttons."
             )
+        if summarized_state_count > 0:
+            lines.append(
+                f"[CONTEXT_GUARD] Summary already generated for {summarized_state_count} page state(s). "
+                "Do NOT summarize same state again; continue next step."
+            )
         return lines
 
     async def _execute_summarize_action(
@@ -299,36 +316,46 @@ class EngineDynamicMixin:
         pre_state_signature: str,
         page,
     ):
-        summary_text = ""
-        if hasattr(agent, "summarize_page"):
-            try:
-                summary_text = await agent.summarize_page(
-                    goal=goal,
-                    history=history_str,
-                    current_url=current_url,
-                    dom_snapshot=dom_snapshot,
-                    instruction=(next_action.target or next_action.input_value or ""),
-                    screenshot_path=step_screenshot,
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ 页面总结调用失败: {e}")
-        if not summary_text:
-            lines = [ln.strip() for ln in (dom_snapshot or "").splitlines() if ln.strip()]
-            summary_text = "页面要点（降级总结）:\n" + "\n".join(lines[:6])
+        tool_instruction = (
+            (next_action.input_value or "").strip()
+            or (next_action.thought or "").strip()
+            or (goal or "").strip()
+        )
+        if not (next_action.input_value or "").strip():
+            # 固化工具调用指令，确保后续 trace/replay 可复现相同总结语义。
+            next_action.input_value = tool_instruction
+
+        tool_name = (
+            (next_action.target or "").strip()
+            if (next_action.action_type or "").strip().lower() == "call_tool"
+            else "summarize_page"
+        )
+        if not tool_name:
+            tool_name = "summarize_page"
+        summary_text = await execute_tool(
+            tool_name=tool_name,
+            agent=agent,
+            goal=goal,
+            history=history_str,
+            current_url=current_url,
+            dom_snapshot=dom_snapshot,
+            screenshot_path=step_screenshot,
+            instruction=tool_instruction,
+        )
         logger.info("📝 [Summary]\n%s", summary_text[:1200])
 
-        stable_target = next_action.target or "__summary__"
-        current_action_log = "Generated page summary"
+        stable_target = tool_name
+        current_action_log = f"Executed tool {tool_name}"
         ai_action_records.append(
             {
                 "step": step_count,
-                "action_type": next_action.action_type,
+                "action_type": "call_tool",
                 "target": stable_target,
                 "input_value": next_action.input_value,
                 "thought": next_action.thought,
                 "success": True,
                 "summary": summary_text,
-                "note": "summarize_only",
+                "note": "call_tool",
             }
         )
         return (
@@ -490,6 +517,9 @@ class EngineDynamicMixin:
         elif next_action.action_type == "summarize":
             # Non-operational action, keep page untouched.
             return stable or "__summary__"
+        elif next_action.action_type == "call_tool":
+            # Tool execution is orchestrated in outer loop where full context is available.
+            return stable or "__call_tool__"
         else:
             raise Exception(f"Unsupported dynamic action: {next_action.action_type}")
 
@@ -593,6 +623,7 @@ class EngineDynamicMixin:
             ai_decision_use_vision=ai_decision_use_vision,
             completion_checks=[c.model_dump() for c in spec.completion_checks],
             completion_logic=spec.completion_logic,
+            allow_repeat_summarize=spec.allow_repeat_summarize,
         )
 
     async def run_dynamic_task(
@@ -614,6 +645,7 @@ class EngineDynamicMixin:
         ai_decision_use_vision: bool = True,
         completion_checks: list[dict] = None,
         completion_logic: str = "any",
+        allow_repeat_summarize: bool = False,
     ):
         from datetime import datetime
 
@@ -641,9 +673,6 @@ class EngineDynamicMixin:
 
         if not context:
             context_options = {"viewport": {"width": 1280, "height": 800}}
-            if (not self.use_cdp) and self.state_path and os.path.exists(self.state_path):
-                logger.info(f"🍪 发现缓存！正在加载本地浏览器状态: {self.state_path}")
-                context_options["storage_state"] = self.state_path
             context = await self._resolve_context(context=context, context_options=context_options)
 
         page = await context.new_page()
@@ -673,6 +702,7 @@ class EngineDynamicMixin:
         pending_invalid_reason = ""
         recent_state_sigs = []
         loop_pressure = 0
+        summarized_state_sigs = set()
         trace_saved = False
         trace_path = None
 
@@ -720,6 +750,7 @@ class EngineDynamicMixin:
                 blocked_target_norms=blocked_target_norms,
                 invalid_targets=invalid_targets,
                 state_cycle_detected=state_cycle_detected,
+                summarized_state_count=len(summarized_state_sigs),
             )
             history_str = "\n".join(action_history + memory_lines)
             try:
@@ -739,7 +770,6 @@ class EngineDynamicMixin:
                 logger.info("🎉 AI 认为任务已完成！")
                 trace_path = recorder.save_to_disk()
                 trace_saved = True
-                await self._save_browser_state(context)
                 break
 
             action_raw_text = f"{next_action.action_type} {next_action.target or ''} {next_action.thought or ''}"
@@ -750,7 +780,58 @@ class EngineDynamicMixin:
             else:
                 logger.info(f"⚡ 自动执行: [{next_action.action_type}] 目标: {next_action.target}")
                 pre_state_signature = await self._compute_page_state_signature(page)
-                if next_action.action_type == "summarize":
+                if (
+                    self._is_summary_tool_action(next_action)
+                    and not allow_repeat_summarize
+                    and current_state_sig in summarized_state_sigs
+                ):
+                    logger.warning("⚠️ 重复 summarize（同一页面状态）已跳过，要求 AI 继续下一步。")
+                    stable_target = "__summary_skip__"
+                    current_action_log = "Skipped duplicate summarize on same page state"
+                    ai_action_records.append(
+                        {
+                            "step": step_count,
+                            "action_type": next_action.action_type,
+                            "target": stable_target,
+                            "input_value": next_action.input_value,
+                            "thought": next_action.thought,
+                            "success": True,
+                            "note": "skipped_duplicate_summarize_same_state",
+                        }
+                    )
+                    action_success = True
+                    progress_context = {
+                        "pre_url": current_url,
+                        "post_url": page.url,
+                        "changed": False,
+                    }
+                if self._is_summary_tool_action(next_action):
+                    if not (action_success and stable_target == "__summary_skip__"):
+                        (
+                            stable_target,
+                            current_action_log,
+                            action_success,
+                            progress_context,
+                        ) = await self._execute_summarize_action(
+                            agent=agent,
+                            goal=goal,
+                            history_str=history_str,
+                            current_url=current_url,
+                            dom_snapshot=dom_snapshot,
+                            step_screenshot=step_screenshot,
+                            next_action=next_action,
+                            step_count=step_count,
+                            ai_action_records=ai_action_records,
+                            pre_state_signature=pre_state_signature,
+                            page=page,
+                        )
+                        if action_success:
+                            summarized_state_sigs.add(current_state_sig)
+                    action_key = None
+                    planned_target = next_action.target or ""
+                    global_target_key = ""
+                    no_progress_detected = False
+                elif (next_action.action_type or "").strip().lower() == "call_tool":
                     (
                         stable_target,
                         current_action_log,
@@ -769,6 +850,8 @@ class EngineDynamicMixin:
                         pre_state_signature=pre_state_signature,
                         page=page,
                     )
+                    if action_success and not allow_repeat_summarize:
+                        summarized_state_sigs.add(current_state_sig)
                     action_key = None
                     planned_target = next_action.target or ""
                     global_target_key = ""
@@ -924,66 +1007,35 @@ class EngineDynamicMixin:
                                 blocked_like = True
                             if blocked_like:
                                 logger.warning("🛑 动作受阻 (timeout/intercepted/not visible/no_progress)。")
-
-                                if attempt < max_attempts - 1:
-                                    if attempt == 0:
-                                        healed_by_popup = await self._try_popup_healer(page)
-                                        if healed_by_popup:
-                                            await page.wait_for_timeout(600)
-                                            continue
-                                    if attempt == 0 and (not disable_fallback_recovery):
-                                        logger.info("↩️ [动态阶段] 尝试回退修复(reload/back)...")
-                                        await self._attempt_generic_recovery(page)
-                                        await page.wait_for_timeout(1200)
-                                        continue
-                                    if (attempt == 0 and disable_fallback_recovery) or (
-                                        attempt == 1 and ai_heal_agent
-                                    ):
-                                        if not ai_heal_agent:
-                                            continue
-                                        logger.info("🧠 [动态阶段] 启动 AI 修复 Agent（最多3次）...")
-                                        recent_steps = "\n".join(action_history[-repair_context_window:]) or "No previous steps."
-                                        heal_result = await self._run_ai_heal_agent(
-                                            page=page,
-                                            ai_heal_agent=ai_heal_agent,
-                                            task_name=task_name,
-                                            recent_steps=recent_steps,
-                                            failed_step_desc=next_action.thought or "dynamic action failed",
-                                            failed_action_type=next_action.action_type,
-                                            failed_target=stable_target or next_action.target,
-                                            failed_input_value=next_action.input_value,
-                                            last_error=str(e),
-                                            step_id=f"dynamic_step_{step_count}",
-                                            validate_coro=lambda: self._execute_dynamic_action(
-                                                page=page,
-                                                next_action=next_action,
-                                                allowed_domains=allowed_domains,
-                                                fast_validate=True,
-                                                click_ratio=chosen_click_ratio,
-                                            ),
-                                            human_handoff_on_auth=human_handoff_on_auth,
-                                            max_attempts=3,
-                                            expected_url_contains=current_url,
-                                        )
-                                        ai_action_records.append(
-                                            {
-                                                "step": step_count,
-                                                "action_type": next_action.action_type,
-                                                "target": stable_target or next_action.target,
-                                                "input_value": next_action.input_value,
-                                                "thought": next_action.thought,
-                                                "success": bool(heal_result.get("resolved")),
-                                                "note": f"ai_heal={heal_result.get('outcome')}: {heal_result.get('detail')}",
-                                            }
-                                        )
-                                        if heal_result.get("resolved"):
-                                            current_action_log = (
-                                                f"AI healed {next_action.action_type} on "
-                                                f"{stable_target or next_action.target}"
-                                            )
-                                            action_success = True
-                                            break
-                                        continue
+                                recovery_result = await self._route_dynamic_blocked_recovery(
+                                    page=page,
+                                    attempt=attempt,
+                                    max_attempts=max_attempts,
+                                    disable_fallback_recovery=disable_fallback_recovery,
+                                    ai_heal_agent=ai_heal_agent,
+                                    human_handoff_on_auth=human_handoff_on_auth,
+                                    repair_context_window=repair_context_window,
+                                    action_history=action_history,
+                                    task_name=task_name,
+                                    next_action=next_action,
+                                    stable_target=stable_target or next_action.target,
+                                    failed_input_value=next_action.input_value,
+                                    error=e,
+                                    step_count=step_count,
+                                    allowed_domains=allowed_domains,
+                                    chosen_click_ratio=chosen_click_ratio,
+                                    current_url=current_url,
+                                    ai_action_records=ai_action_records,
+                                )
+                                if recovery_result.get("outcome") == "continue":
+                                    continue
+                                if recovery_result.get("outcome") == "resolved":
+                                    current_action_log = recovery_result.get(
+                                        "current_action_log",
+                                        f"AI healed {next_action.action_type}",
+                                    )
+                                    action_success = True
+                                    break
 
                             logger.error(f"❌ 动作执行失败: {e}")
                             failed_action_counts[action_key] = failed_action_counts.get(action_key, 0) + 1
@@ -1003,7 +1055,7 @@ class EngineDynamicMixin:
                             current_action_log = f"FAILED to execute {next_action.action_type} on {stable_target}"
                             break
 
-            if action_success and next_action.action_type != "summarize":
+            if action_success and (not self._is_summary_tool_action(next_action)):
                 post_url = page.url
                 post_state_signature = await self._compute_page_state_signature(page)
                 progress_context = {
@@ -1141,17 +1193,23 @@ class EngineDynamicMixin:
                 logger.info(f"✅ 命中完成条件，任务结束: {completion_detail}")
                 trace_path = recorder.save_to_disk()
                 trace_saved = True
-                await self._save_browser_state(context)
                 break
 
             if not manual_review:
                 if action_success:
                     fp_dict = await DomParser.get_element_fingerprint(page, stable_target)
                     result_url = progress_context["post_url"] if progress_context else page.url
-                    action_history.append(
-                        current_action_log
-                        + f" -> [SUCCESS] - Action completed. result_url={result_url}. DO NOT repeat this target. Move to the next step."
-                    )
+                    if self._is_summary_tool_action(next_action):
+                        action_history.append(
+                            current_action_log
+                            + f" -> [SUMMARY_DONE] - Summary completed on this page state. result_url={result_url}. "
+                              "Do NOT summarize the same state again. Proceed to next actionable step or done."
+                        )
+                    else:
+                        action_history.append(
+                            current_action_log
+                            + f" -> [SUCCESS] - Action completed. result_url={result_url}. DO NOT repeat this target. Move to the next step."
+                        )
                     self._record_dynamic_step_if_needed(
                         recorder,
                         current_url=current_url,
@@ -1195,7 +1253,6 @@ class EngineDynamicMixin:
                     )
                 trace_path = recorder.save_to_disk()
                 trace_saved = True
-                await self._save_browser_state(context)
                 break
 
             if user_input == "o":
@@ -1247,7 +1304,6 @@ class EngineDynamicMixin:
         if not trace_saved:
             logger.info("💾 达到步数上限或流程自然结束，自动保存当前轨迹。")
             trace_path = recorder.save_to_disk()
-            await self._save_browser_state(context)
 
         await page.close()
         ai_log_paths = self._save_ai_action_log(task_name=task_name, actions=ai_action_records)

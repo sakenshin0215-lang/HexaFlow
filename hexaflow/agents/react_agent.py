@@ -2,28 +2,42 @@ import logging
 import json
 import re
 from typing import Optional
-import instructor
-from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from hexaflow.agents.llm_gateway import LLMConfig, LLMGateway
+from hexaflow.agents.special_agents import SpecialAgentRouter
 from hexaflow.agents.schemas import (
     AnalyzedAction,
     ClickCoordinateDecision,
     NextAction,
     ReplayRepairDecision,
 )
-from hexaflow.tools.helpers import extract_json_object, image_to_data_url
+from hexaflow.tools.helpers import extract_json_object
 
 load_dotenv()
 logger = logging.getLogger("ReActAgent")
 
-# ==========================================
-# 2. 动态大脑核心逻辑
-# ==========================================
+
 class ReActAgent:
-    def __init__(self, api_key: str, base_url: str, model_name: str):
+    """通用网页自动化 Agent：负责动作决策、回放修复决策与辅助总结。"""
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model_name: str,
+        provider: str = "openai_compatible",
+        enabled_skill_ids: Optional[list[str]] = None,
+    ):
+        self.llm = LLMGateway(
+            LLMConfig(
+                api_key=api_key,
+                base_url=base_url,
+                model_name=model_name,
+                provider=provider,
+            )
+        )
         self.model_name = model_name
-        self.raw_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self.client = instructor.from_openai(self.raw_client)
+        skill_ids = tuple(enabled_skill_ids) if enabled_skill_ids is not None else ("popup",)
+        self.special_router = SpecialAgentRouter.default(enabled_skill_ids=skill_ids)
         self.system_prompt = """
         You are an autonomous Web RPA Agent. 
         You will be given a User Goal, action history, current URL, and interactive elements.
@@ -31,31 +45,42 @@ class ReActAgent:
         CRITICAL RULES:
         1. If the current page matches the goal, output action_type='done'.
         2. Prefer semantic selectors by visible text/role first, e.g.:
-           - button:has-text("行情")
-           - a:has-text("OKX Boost")
-           - [role="button"]:has-text("连接钱包")
+           - button:has-text("Submit")
+           - a:has-text("Details")
+           - [role="button"]:has-text("Confirm")
         3. Avoid fragile hashed class selectors and avoid nth-child when possible.
         4. If DOM snapshot provides [ID: hexa-*] or data-testid, prefer those stable anchors.
-        5. NEVER build selector text from dynamic market metrics, e.g. '+50%', '$13.2', '-2.1%'.
-           Bad example(do not): a:has-text("RAVE +50%")
-           Good example: [hexa-id="hexa-123"] or [data-testid="..."] or text="RAVE" or a:has-text("RAVE")
+        5. NEVER build selector text from dynamic metrics/values that can change every refresh
+           (percentages, prices, counters, timestamps, balances, etc.).
+           Prefer stable anchors: [hexa-id], [data-testid], role/text labels without dynamic suffix.
         6. Explain your logic in the 'thought' field before acting.
         5. For input boxes that require submit, prefer action_type='click_type_enter'.
         6. Use action_type='refresh' when page is stale or blocked by transient UI state.
         7. If a modal/dialog/popover is already open, DO NOT click the opener again. Act inside the modal.
         8. If the previous 1-2 steps already opened a panel/modal, choose the next control inside it, not the old entry button.
         9. If history contains markers like [CONTEXT_GUARD] / BLOCKED_REPEATED_FAILURE, NEVER choose those selectors/URLs again in this run.
-        10. If user goal asks for analysis/report/summary (e.g., summarize trend or page text), use action_type='summarize'
-            instead of clicking.
+        10. If user goal asks for analysis/report/summary (e.g., summarize trend or page text), use
+            action_type='call_tool' with target='summarize_page' instead of clicking.
+        11. If history already contains [SUMMARY_DONE] for current page state, DO NOT summarize again.
+            Choose the next actionable step, or output done if no further step is needed.
         """
+
+    def register_special_agent(self, agent) -> None:
+        """Register a special-purpose agent at runtime (progressive disclosure)."""
+        self.special_router.agents.append(agent)
+
+    def set_enabled_skills(self, enabled_skill_ids: list[str]) -> None:
+        """Replace current skill set by registry ids, e.g. ['popup'] or [] (disable all)."""
+        self.special_router = SpecialAgentRouter.default(enabled_skill_ids=tuple(enabled_skill_ids))
 
     @staticmethod
     def _extract_action_from_text(text: str) -> dict:
+        """从非 JSON 自然语言中尽量抽取 action/target/input 结构。"""
         if not text:
             return {}
         lower = text.lower()
         action = None
-        for a in ["click_type_enter", "press_enter", "refresh", "summarize", "navigate", "click", "type", "done"]:
+        for a in ["call_tool", "click_type_enter", "press_enter", "refresh", "summarize", "navigate", "click", "type", "done"]:
             if re.search(rf"\b{re.escape(a)}\b", lower):
                 action = a
                 break
@@ -84,6 +109,7 @@ class ReActAgent:
 
     @staticmethod
     def _normalize_payload(payload: dict) -> dict:
+        """统一字段命名并做轻量 selector 归一化，减少模型输出方言差异。"""
         if not isinstance(payload, dict):
             return {}
         normalized = dict(payload)
@@ -91,6 +117,8 @@ class ReActAgent:
             normalized["action_type"] = normalized.get("action")
         if not normalized.get("target"):
             normalized["target"] = normalized.get("selector")
+        if not normalized.get("target"):
+            normalized["target"] = normalized.get("tool_name") or normalized.get("tool")
         if normalized.get("input_value") is None:
             for key in ("input", "text", "value"):
                 if normalized.get(key) is not None:
@@ -106,6 +134,7 @@ class ReActAgent:
 
     @staticmethod
     def _canonicalize_selector_target(target: Optional[str]) -> Optional[str]:
+        """将常见的错误 selector 写法修正为可执行形式。"""
         if target is None:
             return None
         t = str(target).strip()
@@ -139,6 +168,7 @@ class ReActAgent:
 
     @staticmethod
     def _is_invalid_target(target: Optional[str]) -> bool:
+        """过滤明显不可执行/被 JSON 污染的 target。"""
         if not target:
             return True
         t = str(target).strip()
@@ -167,6 +197,7 @@ class ReActAgent:
 
     @staticmethod
     def _extract_target_text_hint(target: Optional[str]) -> str:
+        """从 selector 中提取文本提示，用于冲突检测。"""
         if not target:
             return ""
         t = str(target)
@@ -183,6 +214,7 @@ class ReActAgent:
 
     @classmethod
     def _is_thought_action_contradictory(cls, thought: str, action_type: str, target: Optional[str]) -> bool:
+        """检测 thought 与 action 是否自相矛盾（例如说跳过却仍点击同对象）。"""
         if (action_type or "").strip().lower() not in ("click", "type", "click_type_enter"):
             return False
         hint = cls._extract_target_text_hint(target)
@@ -207,6 +239,7 @@ class ReActAgent:
 
     @staticmethod
     def _recover_target_from_context(payload: dict, raw_hint: str) -> dict:
+        """当 target 缺失时，从原始模型文本中恢复可执行 target。"""
         if not isinstance(payload, dict):
             return payload
         action = (payload.get("action_type") or "").strip().lower()
@@ -240,8 +273,6 @@ class ReActAgent:
         for mention in ReActAgent._extract_semantic_mentions(hint):
             if len(mention) > 20:
                 continue
-            if mention in {"当前页面", "连接钱包页面", "钱包连接", "交易页面"}:
-                continue
             if mention.lower() in {"json", "object", "action_type", "target", "input_value", "thought"}:
                 continue
             if any(c in mention for c in ["{", "}", "`"]):
@@ -252,6 +283,7 @@ class ReActAgent:
 
     @staticmethod
     def _parse_dom_snapshot_entries(dom_snapshot: str) -> list[dict]:
+        """解析 DOM 快照为结构化候选项，供后续打分选择。"""
         entries = []
         for line in (dom_snapshot or "").splitlines():
             id_match = re.search(r"\[ID:\s*(hexa-\d+)\]", line)
@@ -278,6 +310,7 @@ class ReActAgent:
 
     @staticmethod
     def _extract_semantic_mentions(text: str) -> list[str]:
+        """抽取 thought 中可用于定位的语义片段（去重+去噪）。"""
         source = text or ""
         mentions = []
 
@@ -293,21 +326,27 @@ class ReActAgent:
             mentions.append(item.strip())
 
         dedup = []
-        generic_terms = {
-            "当前页面", "下一步", "用户目标", "代币详情页", "详情页", "页面", "目标", "步骤",
-            "进入", "点击", "代币", "币种", "当前", "需要", "因此", "应该", "榜单", "列表",
-            "json", "object", "action_type", "target", "input_value", "thought",
-        }
         for item in mentions:
             if not item or item in dedup:
                 continue
-            if item in generic_terms:
+            token = item.strip()
+            token_l = token.lower()
+            # 通用噪音过滤：剔除 schema/代码键名和纯符号
+            if token_l in {
+                "json", "object", "action_type", "target", "input_value", "thought",
+                "selector", "action", "input", "output", "null", "none",
+            }:
                 continue
-            dedup.append(item)
+            if re.fullmatch(r"[\W_]+", token):
+                continue
+            if len(token) <= 1:
+                continue
+            dedup.append(token)
         return dedup
 
     @classmethod
     def _select_best_dom_target(cls, thought: str, dom_snapshot: str) -> Optional[str]:
+        """基于通用文本重合度，在 DOM 快照里选最可能目标（无业务特化规则）。"""
         entries = cls._parse_dom_snapshot_entries(dom_snapshot)
         if not entries:
             return None
@@ -316,7 +355,6 @@ class ReActAgent:
         if not mentions:
             return None
 
-        thought_lower = (thought or "").lower()
         best_entry = None
         best_score = 0
 
@@ -336,19 +374,6 @@ class ReActAgent:
                     score += max(8, len(mention_lower) + 2)
                 elif mention_lower in raw_lower:
                     score += max(5, len(mention_lower))
-
-            if any(k in thought_lower for k in ["最高", "第一", "详情", "币价", "最高价"]):
-                if re.fullmatch(r"[A-Z][A-Z0-9._/-]{2,20}", text or ""):
-                    score += 10
-                if "buy" in raw_lower or "买入" in raw_lower:
-                    score += 4
-
-            # Generic intent signals: when thought asks to connect/start/confirm, prefer actionable controls.
-            if any(k in thought_lower for k in ["connect", "连接", "start", "开始", "confirm", "确认"]):
-                if entry["tag"] in ("button", "a"):
-                    score += 3
-                if "button" in raw_lower or "role=\"button\"" in raw_lower:
-                    score += 2
             if entry["tag"] == "button":
                 score += 1
             if entry["href"]:
@@ -364,26 +389,9 @@ class ReActAgent:
             return f'[hexa-id="{best_entry["id"]}"]'
         return None
 
-    @staticmethod
-    def _is_fragile_metric_selector(target: Optional[str]) -> bool:
-        if not target:
-            return False
-        t = str(target)
-        low = t.lower()
-        if "has-text(" not in low and "text=" not in low:
-            return False
-        # 动态行情/涨跌幅/价格文本：+50% / -2.1% / $13.2 / ¥88 / 1.2%
-        if re.search(r"[+-]?\d+(?:\.\d+)?\s*%", t):
-            return True
-        if re.search(r"[$¥€]\s*\d+(?:\.\d+)?", t):
-            return True
-        # 典型“币名+涨幅”拼接
-        if re.search(r"[A-Z][A-Z0-9._/-]{2,20}\s+[+-]?\d+(?:\.\d+)?\s*%", t):
-            return True
-        return False
-
     @classmethod
     def _recover_target_from_dom_snapshot(cls, payload: dict, dom_snapshot: str) -> dict:
+        """在模型缺少 target 时，利用当前 DOM 快照补齐目标。"""
         if not isinstance(payload, dict):
             return payload
         action = (payload.get("action_type") or "").strip().lower()
@@ -408,10 +416,7 @@ class ReActAgent:
 
     @classmethod
     def _align_hexa_target_with_thought(cls, payload: dict, dom_snapshot: str) -> dict:
-        """
-        若模型给了 hexa-id，但 thought 明确提到代币名（如 RAVE），
-        则校验当前 hexa-id 对应文本是否匹配；不匹配时自动重选。
-        """
+        """校验 hexa-id 与 thought 一致性，不一致则按通用语义重选。"""
         if not isinstance(payload, dict):
             return payload
         action = (payload.get("action_type") or "").strip().lower()
@@ -433,58 +438,65 @@ class ReActAgent:
         cur_entry = next((e for e in entries if e.get("id") == current_hid), None)
         cur_text = (cur_entry.get("text") if cur_entry else "") or ""
 
-        # 提取 thought 里的候选代币符号（过滤常见非目标词）
-        symbols = []
-        ignore = {
-            "OKX", "BSC", "USDT", "BTC", "ETH", "USD", "CNY",
-            "AI", "DEX", "BOOST", "WEB3",
-        }
-        for tok in re.findall(r"\b[A-Z][A-Z0-9._/-]{2,20}\b", thought):
-            t = tok.strip().upper()
-            if t and t not in ignore and t not in symbols:
-                symbols.append(t)
-        if not symbols:
+        mentions = cls._extract_semantic_mentions(thought)
+        if not mentions:
             return payload
 
-        # 当前 hexa 文本已匹配任一 symbol 则接受
-        cur_upper = cur_text.upper()
-        if any(sym in cur_upper for sym in symbols):
+        cur_text_norm = cur_text.strip().lower()
+        if cur_text_norm and any(m.lower() in cur_text_norm for m in mentions):
             return payload
 
-        # 否则按 symbol 精确重选，优先 text 精确命中，其次包含命中
-        for sym in symbols:
-            exact = next((e for e in entries if (e.get("text") or "").strip().upper() == sym), None)
-            if exact:
-                if exact.get("testid"):
-                    payload["target"] = f'[data-testid="{exact["testid"]}"]'
-                else:
-                    payload["target"] = f'[hexa-id="{exact["id"]}"]'
-                return payload
-            contain = next((e for e in entries if sym in (e.get("text") or "").upper()), None)
-            if contain:
-                if contain.get("testid"):
-                    payload["target"] = f'[data-testid="{contain["testid"]}"]'
-                else:
-                    payload["target"] = f'[hexa-id="{contain["id"]}"]'
-                return payload
+        # 重新打分：优先文本重合高、具备 testid/hexa 稳定锚点的元素
+        best_entry = None
+        best_score = 0
+        for entry in entries:
+            txt = (entry.get("text") or "").strip().lower()
+            raw = (entry.get("raw") or "").lower()
+            if not txt and not raw:
+                continue
+            score = 0
+            for m in mentions:
+                ml = m.lower().strip()
+                if not ml:
+                    continue
+                if txt == ml:
+                    score += 12
+                elif ml in txt:
+                    score += max(6, len(ml))
+                elif ml in raw:
+                    score += max(4, len(ml) // 2)
+            if entry.get("testid"):
+                score += 2
+            if entry.get("id"):
+                score += 1
+            if score > best_score:
+                best_score = score
+                best_entry = entry
+
+        if best_entry and best_score > 0:
+            if best_entry.get("testid"):
+                payload["target"] = f'[data-testid="{best_entry["testid"]}"]'
+            else:
+                payload["target"] = f'[hexa-id="{best_entry["id"]}"]'
+            return payload
 
         return payload
 
-    async def _chat_json(self, system_prompt: str, user_prompt: str, screenshot_path: str = "") -> dict:
-        content = [{"type": "text", "text": user_prompt + "\nReturn ONLY one JSON object."}]
-        if screenshot_path:
-            data_url = image_to_data_url(screenshot_path)
-            if data_url:
-                content.append({"type": "image_url", "image_url": {"url": data_url}})
-        resp = await self.raw_client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
+    async def _chat_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        screenshot_path: str = "",
+        screenshot_paths: Optional[list[str]] = None,
+    ) -> dict:
+        """统一模型调用入口：优先 JSON 解析，失败时做容错重试。"""
+        raw = await self.llm.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt + "\nReturn ONLY one JSON object.",
+            screenshot_path=screenshot_path,
+            screenshot_paths=screenshot_paths,
             temperature=0.1,
         )
-        raw = (resp.choices[0].message.content or "").strip()
         payload = extract_json_object(raw)
         if payload:
             payload = self._normalize_payload(payload)
@@ -500,16 +512,16 @@ class ReActAgent:
                 parsed["thought"] = raw[:220] or "parsed from non-json model output"
             return parsed
         # 最后做一次更强约束重试，避免直接触发 refresh 兜底
-        retry_resp = await self.raw_client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Return ONLY strict JSON object with keys: thought, action_type, target, input_value."},
-                {"role": "assistant", "content": raw[:1200]},
-            ],
+        retry_raw = await self.llm.complete(
+            system_prompt=system_prompt,
+            user_prompt=(
+                "Return ONLY strict JSON object with keys: thought, action_type, target, input_value.\n"
+                f"Previous model output:\n{raw[:1200]}"
+            ),
+            screenshot_path=screenshot_path,
+            screenshot_paths=screenshot_paths,
             temperature=0.0,
         )
-        retry_raw = (retry_resp.choices[0].message.content or "").strip()
         payload = extract_json_object(retry_raw)
         if payload:
             payload = self._normalize_payload(payload)
@@ -532,6 +544,7 @@ class ReActAgent:
         instruction: str = "",
         screenshot_path: str = "",
     ) -> str:
+        """生成页面文字总结（用于纯分析/汇报类任务）。"""
         prompt = f"""
         USER GOAL: {goal}
         OPTIONAL INSTRUCTION: {instruction or "(none)"}
@@ -546,21 +559,13 @@ class ReActAgent:
         - If discussing token/price trend, include key observation points and risk hints.
         - Keep it practical and short (4-8 lines).
         """
-        content = [{"type": "text", "text": prompt}]
-        if screenshot_path:
-            data_url = image_to_data_url(screenshot_path)
-            if data_url:
-                content.append({"type": "image_url", "image_url": {"url": data_url}})
         try:
-            resp = await self.raw_client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": "You are a concise web-page summarizer for RPA."},
-                    {"role": "user", "content": content},
-                ],
+            return await self.llm.complete(
+                system_prompt="You are a concise web-page summarizer for RPA.",
+                user_prompt=prompt,
+                screenshot_path=screenshot_path,
                 temperature=0.2,
             )
-            return (resp.choices[0].message.content or "").strip()
         except Exception as e:
             logger.warning(f"⚠️ [Agent] 页面总结失败: {e}")
             return ""
@@ -573,6 +578,7 @@ class ReActAgent:
         dom_snapshot: str,
         screenshot_path: str = "",
     ) -> NextAction:
+        """主决策入口：基于目标、历史、URL、DOM（可含截图）输出下一步动作。"""
         history_lines = [line.strip() for line in (history or "").splitlines() if line.strip()]
         recent_two = "\n".join(history_lines[-2:]) if history_lines else "No recent actions."
         prompt = f"""
@@ -593,15 +599,6 @@ class ReActAgent:
         Do not repeat a previously successful opener button if the modal/panel it opened is already visible now.
         """
         
-        call_kwargs = {
-            "model": self.model_name,
-            "response_model": NextAction,
-            "messages": [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        }
-        
         try:
             payload = await self._chat_json(
                 system_prompt=self.system_prompt,
@@ -609,8 +606,6 @@ class ReActAgent:
                 screenshot_path=screenshot_path,
             )
             payload = self._normalize_payload(payload if isinstance(payload, dict) else {})
-            if self._is_fragile_metric_selector(payload.get("target")):
-                payload["target"] = None
             if self._is_invalid_target(payload.get("target")):
                 payload["target"] = None
             payload = self._recover_target_from_dom_snapshot(payload, dom_snapshot)
@@ -632,8 +627,6 @@ class ReActAgent:
                     screenshot_path=screenshot_path,
                 )
                 repaired = self._normalize_payload(repaired if isinstance(repaired, dict) else {})
-                if self._is_fragile_metric_selector(repaired.get("target")):
-                    repaired["target"] = None
                 if self._is_invalid_target(repaired.get("target")):
                     repaired["target"] = None
                 repaired = self._recover_target_from_dom_snapshot(repaired, dom_snapshot)
@@ -676,7 +669,7 @@ class ReActAgent:
             raise
 
     async def analyze_manual_action(self, goal: str, action_data: dict) -> AnalyzedAction:
-        """AI 旁观者：分析用户的物理点击动作"""
+        """录制阶段分析人工动作意图，生成可读步骤描述。"""
         fp = action_data.get('fingerprint', {})
         action_type = action_data.get('action_type', 'click')
         input_value = action_data.get('input_value', '')
@@ -696,15 +689,6 @@ class ReActAgent:
         Analyze why the user made this action to achieve the goal, and provide a short step description in Chinese.
         If action_type is 'type', the description should mention input content intention.
         """
-        
-        call_kwargs = {
-            "model": self.model_name,
-            "response_model": AnalyzedAction,
-            "messages": [
-                {"role": "system", "content": "You are a helpful RPA action analyzer."},
-                {"role": "user", "content": prompt}
-            ]
-        }
         
         try:
             logger.info("🧠 [Agent] 正在分析用户的操作意图...")
@@ -727,6 +711,7 @@ class ReActAgent:
         candidates: list[dict],
         screenshot_path: str = "",
     ) -> ClickCoordinateDecision:
+        """当 selector 存在多目标歧义时，返回坐标或候选索引做消歧。"""
         prompt = f"""
         USER GOAL: {goal}
 
@@ -794,60 +779,86 @@ class ReActAgent:
         failed_action_type: str,
         failed_target: str,
         last_error: str,
+        screenshot_path: str = "",
+        screenshot_paths: Optional[list[str]] = None,
     ) -> ReplayRepairDecision:
+        """回放失败修复决策入口：给出重试/替换/跳过/人工接管等策略。"""
+        routed = self.special_router.route_repair(
+            last_error=last_error,
+            dom_snapshot=dom_snapshot,
+            failed_target=failed_target,
+        )
+        if routed:
+            logger.info(
+                f"🧩 [SpecialAgent] strategy={routed.strategy} confidence={routed.confidence:.2f} thought={routed.thought}"
+            )
+            return routed
+
+        screenshot_paths = screenshot_paths or []
+        if screenshot_path and screenshot_path not in screenshot_paths:
+            screenshot_paths.insert(0, screenshot_path)
+        screenshot_paths = screenshot_paths[:4]
+
         prompt = f"""
         TASK NAME: {task_name}
-        RECENT REPLAY STEPS:
+        RECENT STEPS:
         {recent_steps}
 
         FAILED STEP:
         - description: {failed_step_desc}
         - action_type: {failed_action_type}
         - target: {failed_target}
-        - error: {last_error}
+        - error + attempts context: {last_error}
+        - screenshot_path: {screenshot_path}
+        - screenshot_paths: {screenshot_paths}
 
         CURRENT URL: {current_url}
         CURRENT INTERACTIVE DOM:
         {dom_snapshot}
 
-        Decide the best single recovery strategy now.
+        Decide one best recovery action now and return ONLY ONE JSON object:
+        {{
+          "thought": "...",
+          "strategy": "retry_with_new_selector|replace_action|skip_step|human_handoff|no_fix",
+          "action_type": "navigate|click|type|click_type_enter|press_enter|refresh|call_tool|wait_for_timeout|ensure_quote_token|click_relative|null",
+          "target": "selector-or-url-or-null",
+          "input_value": "value-or-null",
+          "skip_reason": "reason-or-null",
+          "confidence": 0.0
+        }}
         """
 
         system_prompt = """
-        You are a replay-repair agent for web automation.
-        Your task is to recover from a failed deterministic step with minimal risk.
+        You are an autonomous runtime-heal agent for web RPA.
+        Goal: recover safely with minimal side effects.
 
-        STRICT RULES:
-        1) Prefer retry_with_new_selector when intent is still same but selector changed.
-        2) Use replace_action when current page state changed and another action is needed.
-        3) Use skip_step only when this step is clearly optional/redundant.
-        4) Use human_handoff for login/captcha/2FA/wallet unlock/signature scenarios.
-        5) If no reliable fix, use no_fix.
-        6) Never invent impossible selectors; prefer concise text selectors or robust css.
-        7) For token dropdown mismatch, prefer replace_action with action_type='ensure_quote_token',
-           input_value='<TARGET_SYMBOL>' and optional target='<dropdown button selector>'.
-        8) If an input action must submit, prefer action_type='click_type_enter'.
-        9) If failure is due to intercept/overlay/modal, first remove the top-most blocking popup (highest z-index/front-most), then retry target action.
-        10) For popup handling, prefer close controls in order:
-            a) top-right X / close icon / aria-label contains close
-            b) close-like text: 关闭 / 跳过 / Skip / Close / Cancel
-            c) acknowledgement text: 我知道了 / 我已知晓 / Got it
-            Never prefer 下一步 / 上一步 / Next / Previous if any close option exists.
-        11) If multiple popups exist, solve one layer at a time: close top layer first, re-evaluate DOM, then handle next layer.
+        MUST FOLLOW:
+        1) Prefer retry_with_new_selector if intent unchanged.
+        2) Use replace_action if page state changed and another action is needed.
+        3) Use skip_step only if clearly optional/redundant.
+        4) Use human_handoff for login/captcha/2FA/wallet unlock/signature.
+        5) If no reliable action, return no_fix.
+        6) If previous attempts already failed, avoid repeating the same weak fix.
+        7) Prefer selector-based actions. Use click_relative only as a last fallback
+           when selector is impossible; input_value format: "x_ratio,y_ratio" in [0,1].
+        8) If a tutorial/onboarding modal blocks the page, prefer closing it via top-right
+           close button (X/关闭/跳过) instead of clicking 下一步 repeatedly.
         """
 
         try:
             payload = await self._chat_json(
                 system_prompt=system_prompt,
                 user_prompt=prompt,
+                screenshot_path=screenshot_path,
+                screenshot_paths=screenshot_paths,
             )
             decision = ReplayRepairDecision.model_validate(payload)
             logger.info(
-                f"🧠 [ReplayRepair] strategy={decision.strategy} confidence={decision.confidence:.2f} thought={decision.thought}"
+                f"🧠 [AIHeal] strategy={decision.strategy} confidence={decision.confidence:.2f} thought={decision.thought}"
             )
             return decision
         except Exception as e:
-            logger.error(f"❌ [ReplayRepair] 决策失败: {e}")
+            logger.error(f"❌ [AIHeal] 决策失败: {e}")
             return ReplayRepairDecision(
                 thought="repair model failed",
                 strategy="no_fix",

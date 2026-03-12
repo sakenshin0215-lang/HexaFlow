@@ -24,7 +24,7 @@ class CompletionCheck(BaseModel):
         description="Completion check type."
     )
     value: str = Field(description="Expected text/URL fragment/selector.")
-    action_type: Optional[Literal["navigate", "click", "type", "click_type_enter", "press_enter", "refresh"]] = Field(
+    action_type: Optional[Literal["navigate", "click", "type", "click_type_enter", "press_enter", "refresh", "call_tool"]] = Field(
         default=None,
         description="Optional action type filter, used when check_type=action_target_contains.",
     )
@@ -52,6 +52,10 @@ class TaskSpec(BaseModel):
     completion_checks: List[CompletionCheck] = Field(
         default_factory=list,
         description="Optional deterministic completion checks for dynamic task.",
+    )
+    allow_repeat_summarize: bool = Field(
+        default=False,
+        description="If false, repeated summarize on the same page state will be skipped.",
     )
     failure_policy: FailurePolicy = Field(default_factory=FailurePolicy)
     loop_policy: LoopPolicy = Field(default_factory=LoopPolicy)

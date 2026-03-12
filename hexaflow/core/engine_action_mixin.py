@@ -2,7 +2,9 @@ import logging
 
 from playwright.async_api import Page
 
-from hexaflow.tools.token_selector import ensure_quote_token
+from hexaflow.browser.token_selector import ensure_quote_token
+from hexaflow.tools.dom_parser import DomParser
+from hexaflow.tools.tool_runtime import execute_tool
 
 
 logger = logging.getLogger("HexaEngine")
@@ -56,6 +58,26 @@ class EngineActionMixin:
 
         if action_type == "summarize":
             # Non-operational action: no DOM interaction by design.
+            return
+
+        if action_type == "call_tool":
+            tool_name = (target or "").strip() or "summarize_page"
+            if not tool_name:
+                raise Exception("override call_tool 缺少 tool 名称(target)")
+            dom_snapshot = await DomParser.get_interactive_elements(page)
+            agent = getattr(self, "_runtime_tool_agent", None)
+            goal = getattr(self, "_runtime_tool_goal", "") or "Replay tool call"
+            history = getattr(self, "_runtime_tool_history", "") or ""
+            summary_text = await execute_tool(
+                tool_name=tool_name,
+                agent=agent,
+                goal=goal,
+                history=history,
+                current_url=page.url,
+                dom_snapshot=dom_snapshot,
+                instruction=(input_value or ""),
+            )
+            logger.info("🛠️ [Tool:%s]\n%s", tool_name, (summary_text or "")[:1200])
             return
 
         if action_type == "wait_for_timeout":

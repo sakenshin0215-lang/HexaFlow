@@ -9,14 +9,14 @@ class NextAction(BaseModel):
         description="Step-by-step reasoning: What is the goal? What is on the screen right now? What should I do next?",
     )
     action_type: str = Field(
-        description="MUST be one of: [navigate, click, type, click_type_enter, press_enter, refresh, summarize, done]"
+        description="MUST be one of: [navigate, click, type, click_type_enter, press_enter, refresh, call_tool, summarize, done]"
     )
     target: Optional[str] = Field(
         None,
-        description='If action is "navigate", put URL here. If click/type/click_type_enter, put selector, e.g., \'[hexa-id="hexa-5"]\'',
+        description='If action is "navigate", put URL here. If click/type/click_type_enter, put selector. If call_tool, put tool name (e.g. "summarize_page").',
     )
     input_value: Optional[str] = Field(
-        None, description='Text to input if action_type is "type" or "click_type_enter".'
+        None, description='Text to input if action_type is "type"/"click_type_enter"; or tool instruction if action_type is "call_tool".'
     )
 
 
@@ -36,7 +36,7 @@ class ReplayRepairDecision(BaseModel):
     )
     action_type: Optional[str] = Field(
         None,
-        description="Used when strategy=replace_action. One of [navigate, click, type, click_type_enter, press_enter, refresh, summarize, wait_for_timeout, ensure_quote_token, click_relative].",
+        description="Used when strategy=replace_action. One of [navigate, click, type, click_type_enter, press_enter, refresh, call_tool, summarize, wait_for_timeout, ensure_quote_token, click_relative].",
     )
     target: Optional[str] = Field(
         None, description="New selector/URL when strategy=retry_with_new_selector or replace_action."
@@ -93,7 +93,7 @@ class ElementFingerprint(BaseModel):
 
 class StepAction(BaseModel):
     action_type: str = Field(
-        description="[navigate, click, type, click_type_enter, press_enter, refresh, summarize, wait_for_timeout, scroll, ensure_quote_token]"
+        description="[navigate, click, type, click_type_enter, press_enter, refresh, call_tool, summarize, wait_for_timeout, scroll, ensure_quote_token]"
     )
     target: Optional[str] = Field(None, description="Stable target locator")
     input_value: Optional[str] = Field(None)
