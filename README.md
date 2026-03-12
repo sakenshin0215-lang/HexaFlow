@@ -124,7 +124,7 @@ HexaFlow 默认支持 CDP 连接本地 Chrome，复用真实 profile。
 
 循环范围由 trace 内 `loop_marker=start/end` 定义。
 
-## main 里常用开关说明（你说的“按钮配置”）
+## main 里常用开关说明
 
 下面这些都在 `main_*.py` 顶部配置块里改，平时最常用：
 
