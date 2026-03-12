@@ -212,46 +212,6 @@ TaskSpec 定义在 `workspace/task_specs/*.json`，核心字段如下：
 
 历史兼容：`summarize` 仍可读，但建议统一用 `call_tool`。
 
-## Tool 调用机制（重点）
-
-### 为什么要 `call_tool`
-
-把“总结/分析”从普通页面动作中抽离，避免和 DOM 点击混淆，并可稳定回放。
-
-### 当前内置工具
-
-1. `summarize_page`
-
-### 使用方式
-
-AI 返回：
-
-```json
-{
-  "action_type": "call_tool",
-  "target": "summarize_page",
-  "input_value": "请总结热点媒体观点和风险"
-}
-```
-
-执行与回放规则：
-
-1. 动态执行时后台调用工具
-2. 会记录 `step_x_call_tool`
-3. 首次会把工具指令固化到 trace 的 `action.input_value`
-4. replay 会复用同一工具和同一指令
-5. 旧 trace 的 `summarize` 自动映射为 `call_tool:summarize_page`
-
-## Skill 机制
-
-Skill 采用“注册表 + 路由”而非运行时文件扫描。
-
-1. 注册表：`hexaflow/agents/skills/registry.py`
-2. 路由器：`hexaflow/agents/special_agents.py`
-3. 当前默认 skill：`popup`
-
-你可在 main 中用 `enabled_skill_ids` 动态启停。
-
 ## 报告与产物
 
 当 `save_reports=True` 时会产出：
@@ -262,24 +222,6 @@ Skill 采用“注册表 + 路由”而非运行时文件扫描。
 4. element monitor（JSON/MD）
 
 当 `save_reports=False`（默认）时不写这些文件。
-
-## 常见问题
-
-### 1) loop 里 `call_tool` 没走模型，只输出降级总结
-
-通常是没有把可用 agent 传给 loop/replay 修复链路。请确认：
-
-1. `enable_ai_repair = True`
-2. `repair_agent = ReActAgent(...)`
-3. `run_loop_task_from_spec(..., replay_repair_agent=repair_agent)`
-
-### 2) 为什么动作成功了但看起来页面没变化
-
-`call_tool` 属于“非 DOM 变化动作”，成功不依赖页面变化。
-
-### 3) 是否还需要 auth_state
-
-不需要。当前已移除 `auth_state/storage_state` 流程，CDP 直接复用本地浏览器 profile。
 
 ## 最小实战流程（推荐）
 
