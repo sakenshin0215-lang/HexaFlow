@@ -77,13 +77,15 @@ $env:CDP_START_URL="https://www.okx.com/web3"
 ```
 
 ### 3. 运行入口
-1. 动态执行（TaskSpec）：`main.py`
-2. 示教录制：`main_record.py`
-3. 轨迹回放：`main_replay.py`
-4. 挂起恢复：`main_resume.py`
-5. 循环任务：`main_loop.py`
-6. 美团消费者下单辅助：`main_meituan.py`
-7. 小红书浏览辅助：`main_xiaohongshu.py`
+入口脚本已统一收纳到 `runners/` 目录：
+1. 动态执行（TaskSpec）：`python runners/main.py`
+2. 示教录制：`python runners/main_record.py`
+3. 轨迹回放：`python runners/main_replay.py`
+4. 挂起恢复：`python runners/main_resume.py`
+5. 循环任务：`python runners/main_loop.py`
+6. AI 全流程：`python runners/main_ai_full.py`
+7. 美团消费者下单辅助：`python runners/main_meituan.py`
+8. 小红书浏览辅助：`python runners/main_xiaohongshu.py`
 
 ---
 
@@ -106,7 +108,7 @@ $env:CDP_START_URL="https://www.okx.com/web3"
 
 新增了一个可直接运行的消费者侧工作流：
 1. 任务文件：`memory/workspace/task_specs/meituan_consumer_order_assist.json`
-2. 运行入口：`main_meituan.py`
+2. 运行入口：`python runners/main_meituan.py`
 
 默认目标：
 1. 进入美团外卖消费者链路
@@ -116,12 +118,12 @@ $env:CDP_START_URL="https://www.okx.com/web3"
 
 建议运行方式：
 ```bash
-USE_CDP=1 CDP_PORT=9333 CDP_START_URL=https://h5.waimai.meituan.com/waimai/mindex/home MEITUAN_PREFER_EXISTING_PAGE=1 python main_meituan.py
+USE_CDP=1 CDP_PORT=9333 CDP_START_URL=https://h5.waimai.meituan.com/waimai/mindex/home MEITUAN_PREFER_EXISTING_PAGE=1 python runners/main_meituan.py
 ```
 
 说明：
 1. 该工作流默认复用真实 Chrome Profile，适合沿用已有登录态。
-2. 在 CDP 模式下，`main_meituan.py` 会优先复用已有浏览器页面；如果你已经把页面停在 `https://h5.waimai.meituan.com/waimai/mindex/home`，引擎会尽量直接从这一页接着跑。
+2. 在 CDP 模式下，`runners/main_meituan.py` 会优先复用已有浏览器页面；如果你已经把页面停在 `https://h5.waimai.meituan.com/waimai/mindex/home`，引擎会尽量直接从这一页接着跑。
 3. 若遇到登录、验证码、地址选择等环节，引擎会走人工接管。
 4. `加入购物车`、`去结算`、`提交订单`、`支付` 等动作已挂上风险闸门，需要人工批准。
 

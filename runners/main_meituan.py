@@ -1,6 +1,10 @@
 import asyncio
 import os
+import sys
 from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from instructor.core.exceptions import InstructorRetryException
 from openai import AuthenticationError
@@ -55,7 +59,7 @@ async def main():
             raise RuntimeError(
                 "CDP 连接到了一个不被 Playwright 完整支持的调试端点。"
                 "通常是因为当前 CDP_PORT 已被别的程序占用，或者连到的不是标准 Chrome/Chromium。"
-                "请改用新的端口重试，例如 `CDP_PORT=9333 python main_meituan.py`。"
+                "请改用新的端口重试，例如 `CDP_PORT=9333 python runners/main_meituan.py`。"
             ) from exc
         raise
 

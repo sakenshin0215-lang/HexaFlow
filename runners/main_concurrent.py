@@ -1,5 +1,11 @@
 import asyncio
 import random
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from hexaflow.core.engine import HexaEngine
 
 async def worker(engine: HexaEngine, worker_id: int, trace_file: str):
