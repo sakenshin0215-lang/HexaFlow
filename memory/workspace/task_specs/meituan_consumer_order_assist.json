@@ -1,0 +1,88 @@
+{
+  "task_name": "meituan_consumer_order_assist",
+  "goal": "进入美团外卖消费者页面，打开一个真实商家菜单页并停留在可点菜状态。目标是落到真实用户下单链路中的商家菜单页，不要提交订单，不要支付，不要完成结算。",
+  "notes": [
+    "优先停留在 i.waimai.meituan.com、h5.waimai.meituan.com 与 passport.meituan.com 域名下",
+    "如果遇到登录、验证码、人机验证，暂停等待人工处理后继续",
+    "默认从 h5.waimai.meituan.com 的用户首页开始；如果当前已在该页面，优先复用当前页面继续操作",
+    "如果当前在城市选择页，优先选择一个热门城市；如需地址，优先使用页面中已有地址或公共地标，不要请求精确定位",
+    "如果进入地址页，优先避免点击“开启定位”或任何系统定位授权",
+    "进入商家列表后，优先选择第一屏可见的真实商家进入菜单页",
+    "进入菜单页后确认出现商家名、商品、价格、起送价或配送信息，再结束任务",
+    "不要执行加入购物车、去结算、提交订单、支付等高风险动作，除非人工明确批准"
+  ],
+  "start_url": "https://h5.waimai.meituan.com/waimai/mindex/home",
+  "manual_review": false,
+  "max_steps": 12,
+  "allowed_domains": [
+    "i.waimai.meituan.com",
+    "h5.waimai.meituan.com",
+    "passport.meituan.com",
+    "waimai.meituan.com",
+    "meituan.com"
+  ],
+  "blocked_keywords": [
+    "提交订单",
+    "去支付",
+    "立即支付",
+    "确认支付",
+    "支付并提交",
+    "立即购买"
+  ],
+  "failure_policy": {
+    "mode": "stop",
+    "max_consecutive_failures": 3
+  },
+  "risky_actions_policy": {
+    "enabled": true,
+    "mode": "require_confirm",
+    "keywords": [
+      "加入购物车",
+      "加购",
+      "去结算",
+      "提交订单",
+      "下单",
+      "支付",
+      "确认支付",
+      "立即支付",
+      "购买",
+      "checkout",
+      "place order",
+      "pay",
+      "submit order"
+    ],
+    "allowed_domains": [
+      "i.waimai.meituan.com",
+      "h5.waimai.meituan.com",
+      "passport.meituan.com",
+      "waimai.meituan.com"
+    ],
+    "allowed_url_contains": [
+      "waimai.meituan.com"
+    ],
+    "max_confirm_wait_seconds": 900
+  },
+  "success_criteria": {
+    "mode": "all",
+    "criteria": [
+      {
+        "type": "url_contains",
+        "value": "/waimai/mindex/menu",
+        "case_insensitive": true
+      },
+      {
+        "type": "text_present",
+        "value": "起送",
+        "case_insensitive": true
+      }
+    ],
+    "check_every_step": true,
+    "max_wait_ms": 1500
+  },
+  "loop_policy": {
+    "enabled": false,
+    "loop_name": "meituan_once",
+    "iterations": 1,
+    "max_iteration_retries": 1
+  }
+}

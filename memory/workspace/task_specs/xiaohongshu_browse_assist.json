@@ -1,0 +1,69 @@
+{
+  "task_name": "xiaohongshu_browse_assist",
+  "goal": "打开小红书推荐页，浏览首页内容，进入一篇可见笔记查看详情并停留阅读。只有在人工确认后才允许执行点赞；不要执行关注、评论、私信、收藏或任何批量互动。完成一次进入笔记并浏览后即可结束。",
+  "notes": [
+    "优先停留在 xiaohongshu.com 域名下，不要跳转到站外页面",
+    "如果遇到登录、验证码、人机验证或弹窗，暂停等待人工处理后继续",
+    "优先选择首页第一屏可见的笔记进入详情，避免无限滚动",
+    "进入笔记详情后等待几秒，确认已完成一次浏览，再决定是否结束",
+    "如果准备点击点赞，必须先经过人工确认；未确认则不要点赞"
+  ],
+  "start_url": "https://www.xiaohongshu.com/explore",
+  "manual_review": false,
+  "max_steps": 8,
+  "allowed_domains": [
+    "xiaohongshu.com"
+  ],
+  "blocked_keywords": [
+    "关注",
+    "评论",
+    "私信",
+    "转发",
+    "批量",
+    "群发",
+    "自动关注",
+    "自动评论"
+  ],
+  "failure_policy": {
+    "mode": "stop",
+    "max_consecutive_failures": 3
+  },
+  "risky_actions_policy": {
+    "enabled": true,
+    "mode": "require_confirm",
+    "keywords": [
+      "点赞",
+      "like",
+      "love",
+      "heart",
+      "收藏",
+      "favorite",
+      "star"
+    ],
+    "allowed_domains": [
+      "xiaohongshu.com"
+    ],
+    "allowed_url_contains": [
+      "xiaohongshu.com"
+    ],
+    "max_confirm_wait_seconds": 900
+  },
+  "success_criteria": {
+    "mode": "any",
+    "criteria": [
+      {
+        "type": "url_contains",
+        "value": "/explore/",
+        "case_insensitive": true
+      }
+    ],
+    "check_every_step": false,
+    "max_wait_ms": 0
+  },
+  "loop_policy": {
+    "enabled": false,
+    "loop_name": "xhs_once",
+    "iterations": 1,
+    "max_iteration_retries": 1
+  }
+}

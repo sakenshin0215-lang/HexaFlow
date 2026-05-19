@@ -22,6 +22,44 @@
     "mode": "stop",
     "max_consecutive_failures": 4
   },
+  "risky_actions_policy": {
+    "enabled": true,
+    "mode": "require_confirm",
+    "keywords": [
+      "确认",
+      "提交",
+      "购买",
+      "卖出",
+      "转账",
+      "提现",
+      "发送",
+      "授权",
+      "approve",
+      "sign",
+      "swap",
+      "connect wallet"
+    ],
+    "allowed_domains": [
+      "okx.com",
+      "web3.okx.com"
+    ],
+    "allowed_url_contains": [
+      "okx.com/web3"
+    ],
+    "max_confirm_wait_seconds": 900
+  },
+  "success_criteria": {
+    "mode": "any",
+    "criteria": [
+      {
+        "type": "text_present",
+        "value": "0.01",
+        "case_insensitive": true
+      }
+    ],
+    "check_every_step": true,
+    "max_wait_ms": 0
+  },
   "loop_policy": {
     "enabled": true,
     "loop_name": "main_loop",

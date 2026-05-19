@@ -24,10 +24,7 @@ async def main():
     engine = HexaEngine(headless=False)
     await engine.start(
         use_cdp=use_cdp,
-        cdp_config=CDPConfig(
-        user_data_dir="/Users/kenshinnb/pw-profiles/okx-chrome",
-        profile_directory="Default",
-        ) if use_cdp else None,
+        cdp_config=CDPConfig() if use_cdp else None,
         cdp_start_url=cdp_start_url
     )
     try:
@@ -45,4 +42,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

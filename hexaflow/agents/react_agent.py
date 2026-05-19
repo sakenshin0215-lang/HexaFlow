@@ -3,6 +3,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 import instructor
 from openai import AsyncOpenAI
+from openai import APIStatusError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,8 +15,14 @@ logger = logging.getLogger("ReActAgent")
 class NextAction(BaseModel):
     thought: str = Field(description="Step-by-step reasoning: What is the goal? What is on the screen right now? What should I do next?")
     action_type: str = Field(description="MUST be one of: [navigate, click, type, done]")
-    target: Optional[str] = Field(None, description="If action is 'navigate', put URL here. If 'click' or 'type', put the exact ID bracket here, e.g., '[hexa-id=\"hexa-5\"]'")
+    target: Optional[str] = Field(None, description="If action is 'navigate', put URL here.")
     input_value: Optional[str] = Field(None, description="Text to input if action_type is 'type'.")
+    click_x: Optional[float] = Field(
+        None, description="Viewport X coordinate for visual click/type. 0 <= x < viewport_width."
+    )
+    click_y: Optional[float] = Field(
+        None, description="Viewport Y coordinate for visual click/type. 0 <= y < viewport_height."
+    )
 
 class AnalyzedAction(BaseModel):
     thought: str = Field(description="Analyze why the user clicked this element to achieve the goal.")
@@ -44,40 +51,135 @@ class ReplayRepairDecision(BaseModel):
 # ==========================================
 class ReActAgent:
     def __init__(self, api_key: str, base_url: str, model_name: str):
+        self.base_url = base_url or ""
         self.model_name = model_name
         self.client = instructor.from_openai(AsyncOpenAI(api_key=api_key, base_url=base_url))
         self.system_prompt = """
         You are an autonomous Web RPA Agent. 
-        You will be given a User Goal, your Action History, and the Current Screen's interactive elements (with hexa-id).
+        You will be given a User Goal, Action History, and the current screenshot.
         
         CRITICAL RULES:
         1. If the current page matches the goal, output action_type='done'.
-        2. If you need to click or type, you MUST use the exact CSS selector format: '[hexa-id="hexa-X"]' based on the provided Current Screen data.
-        3. Do NOT guess selectors. Only use the IDs provided in the Current Screen.
-        4. Explain your logic in the 'thought' field before acting.
+        2. For click/type, you MUST output click_x and click_y based on the screenshot.
+        3. click_x/click_y must be inside viewport and visually point to the control.
+        4. Do NOT rely on DOM IDs/selectors for click/type actions.
+        5. Explain your logic in the 'thought' field before acting.
         """
 
-    async def decide_next_action(self, goal: str, history: str, current_url: str, dom_snapshot: str) -> NextAction:
-        prompt = f"""
-        USER GOAL: {goal}
+    def _supports_image_input(self) -> bool:
+        base = self.base_url.lower()
+        model = self.model_name.lower()
+        if "api.groq.com" in base:
+            # Groq 官方文档中 openai/gpt-oss-120b 为 Text-only 输入。
+            if model.startswith("openai/gpt-oss-"):
+                return False
+        return True
+
+    @staticmethod
+    def _clip_text(text: str, max_chars: int) -> str:
+        raw = (text or "").strip()
+        if len(raw) <= max_chars:
+            return raw
+        head = raw[: max_chars // 2]
+        tail = raw[-(max_chars // 2) :]
+        return f"{head}\n...[truncated]...\n{tail}"
+
+    def _build_prompt(
+        self,
+        goal: str,
+        history: str,
+        current_url: str,
+        dom_snapshot: str,
+        viewport_text: str,
+        compact: bool = False,
+    ) -> str:
+        goal_text = self._clip_text(goal, 1200 if compact else 2400)
+        history_text = self._clip_text(
+            history if history else "No actions taken yet.",
+            800 if compact else 1800,
+        )
+        dom_text = self._clip_text(dom_snapshot, 1800 if compact else 5000)
+        return f"""
+        USER GOAL: {goal_text}
         
         ACTION HISTORY SO FAR:
-        {history if history else "No actions taken yet."}
+        {history_text}
         
         CURRENT URL: {current_url}
+
+        VIEWPORT SIZE: {viewport_text}
         
-        CURRENT SCREEN (Interactive Elements):
-        {dom_snapshot}
+        CURRENT SCREEN (DOM reference, optional):
+        {dom_text}
         
         Based on the above, what is the SINGLE next action to take?
         """
+
+    @staticmethod
+    def _build_user_content(
+        prompt_text: str,
+        screenshot_base64: Optional[str] = None,
+        screenshot_mime: str = "image/jpeg",
+    ):
+        if not screenshot_base64:
+            return prompt_text
+        return [
+            {"type": "text", "text": prompt_text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{screenshot_mime};base64,{screenshot_base64}"
+                },
+            },
+        ]
+
+    async def decide_next_action(
+        self,
+        goal: str,
+        history: str,
+        current_url: str,
+        dom_snapshot: str,
+        screenshot_base64: Optional[str] = None,
+        screenshot_mime: str = "image/jpeg",
+        viewport_width: Optional[int] = None,
+        viewport_height: Optional[int] = None,
+    ) -> NextAction:
+        viewport_text = (
+            f"{viewport_width}x{viewport_height}"
+            if viewport_width and viewport_height
+            else "unknown"
+        )
+        prompt = self._build_prompt(
+            goal=goal,
+            history=history,
+            current_url=current_url,
+            dom_snapshot=dom_snapshot,
+            viewport_text=viewport_text,
+            compact=False,
+        )
+        compact_prompt = self._build_prompt(
+            goal=goal,
+            history=history,
+            current_url=current_url,
+            dom_snapshot=dom_snapshot,
+            viewport_text=viewport_text,
+            compact=True,
+        )
+        use_image_input = bool(screenshot_base64) and self._supports_image_input()
         
         call_kwargs = {
             "model": self.model_name,
             "response_model": NextAction,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "user",
+                    "content": self._build_user_content(
+                        prompt_text=prompt,
+                        screenshot_base64=screenshot_base64 if use_image_input else None,
+                        screenshot_mime=screenshot_mime,
+                    ),
+                },
             ]
         }
         
@@ -86,10 +188,45 @@ class ReActAgent:
             logger.info(f"🧠 [Agent 思考]: {action.thought}")
             return action
         except Exception as e:
+            if use_image_input:
+                logger.warning(f"⚠️ [Agent] 图像输入失败，降级为纯文本决策: {e}")
+                fallback_kwargs = {
+                    "model": self.model_name,
+                    "response_model": NextAction,
+                    "messages": [
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": compact_prompt},
+                    ],
+                }
+                try:
+                    action = await self.client.chat.completions.create(**fallback_kwargs)
+                    logger.info(f"🧠 [Agent 思考]: {action.thought}")
+                    return action
+                except Exception as fallback_exc:
+                    e = fallback_exc
+            if isinstance(e, APIStatusError) and e.status_code == 413:
+                logger.warning("⚠️ [Agent] 请求过大，使用紧凑上下文重试。")
+                compact_kwargs = {
+                    "model": self.model_name,
+                    "response_model": NextAction,
+                    "messages": [
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": compact_prompt},
+                    ],
+                }
+                action = await self.client.chat.completions.create(**compact_kwargs)
+                logger.info(f"🧠 [Agent 思考]: {action.thought}")
+                return action
             logger.error(f"❌ [Agent 决策失败]: {e}")
             raise
 
-    async def analyze_manual_action(self, goal: str, action_data: dict) -> AnalyzedAction:
+    async def analyze_manual_action(
+        self,
+        goal: str,
+        action_data: dict,
+        screenshot_base64: Optional[str] = None,
+        screenshot_mime: str = "image/jpeg",
+    ) -> AnalyzedAction:
         """AI 旁观者：分析用户的物理点击动作"""
         fp = action_data.get('fingerprint', {})
         action_type = action_data.get('action_type', 'click')
@@ -116,7 +253,14 @@ class ReActAgent:
             "response_model": AnalyzedAction,
             "messages": [
                 {"role": "system", "content": "You are a helpful RPA action analyzer."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "user",
+                    "content": self._build_user_content(
+                        prompt_text=prompt,
+                        screenshot_base64=screenshot_base64,
+                        screenshot_mime=screenshot_mime,
+                    ),
+                },
             ]
         }
         
@@ -125,6 +269,20 @@ class ReActAgent:
             analysis = await self.client.chat.completions.create(**call_kwargs)
             return analysis
         except Exception as e:
+            if screenshot_base64:
+                logger.warning(f"⚠️ [Agent] 图像输入失败，降级为纯文本分析: {e}")
+                fallback_kwargs = {
+                    "model": self.model_name,
+                    "response_model": AnalyzedAction,
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful RPA action analyzer."},
+                        {"role": "user", "content": prompt},
+                    ],
+                }
+                try:
+                    return await self.client.chat.completions.create(**fallback_kwargs)
+                except Exception:
+                    pass
             logger.error(f"❌ AI 分析失败: {e}")
             return AnalyzedAction(thought="Failed to analyze.", description="执行点击操作")
 
@@ -138,6 +296,8 @@ class ReActAgent:
         failed_action_type: str,
         failed_target: str,
         last_error: str,
+        screenshot_base64: Optional[str] = None,
+        screenshot_mime: str = "image/jpeg",
     ) -> ReplayRepairDecision:
         prompt = f"""
         TASK NAME: {task_name}
@@ -175,7 +335,14 @@ class ReActAgent:
             "response_model": ReplayRepairDecision,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "user",
+                    "content": self._build_user_content(
+                        prompt_text=prompt,
+                        screenshot_base64=screenshot_base64,
+                        screenshot_mime=screenshot_mime,
+                    ),
+                },
             ],
         }
         try:
@@ -185,6 +352,24 @@ class ReActAgent:
             )
             return decision
         except Exception as e:
+            if screenshot_base64:
+                logger.warning(f"⚠️ [ReplayRepair] 图像输入失败，降级为纯文本修复决策: {e}")
+                fallback_kwargs = {
+                    "model": self.model_name,
+                    "response_model": ReplayRepairDecision,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                }
+                try:
+                    decision = await self.client.chat.completions.create(**fallback_kwargs)
+                    logger.info(
+                        f"🧠 [ReplayRepair] strategy={decision.strategy} confidence={decision.confidence:.2f} thought={decision.thought}"
+                    )
+                    return decision
+                except Exception:
+                    pass
             logger.error(f"❌ [ReplayRepair] 决策失败: {e}")
             return ReplayRepairDecision(
                 thought="repair model failed",

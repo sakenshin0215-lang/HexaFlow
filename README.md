@@ -51,10 +51,29 @@ playwright install chromium
 ### 2. 配置环境变量（可选）
 ```bash
 export USE_CDP=1
-export CDP_PORT=9222
-export CHROME_USER_DATA_DIR=/Users/kenshinnb/pw-profiles/okx-chrome
+export CDP_PORT=9333
+export CHROME_USER_DATA_DIR="$HOME/pw-profiles/hexaflow-cdp"
 export CHROME_PROFILE_DIRECTORY=Default
 export CDP_START_URL=https://www.okx.com/web3
+```
+
+建议：
+1. 优先使用独立的 `CHROME_USER_DATA_DIR`，不要直接复用系统默认 Chrome 用户目录，否则浏览器已打开时很容易因为 profile 锁导致 CDP 启动失败。
+2. macOS/Linux 路径里如果有空格，记得加引号。
+3. 如果程序没有自动找到浏览器，可显式指定：
+```bash
+export CHROME_BINARY="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+Windows 示例：
+```powershell
+$env:USE_CDP="1"
+$env:CDP_PORT="9333"
+$env:CHROME_USER_DATA_DIR="$env:USERPROFILE\\pw-profiles\\hexaflow-cdp"
+$env:CHROME_PROFILE_DIRECTORY="Default"
+$env:CDP_START_URL="https://www.okx.com/web3"
+# 如需手动指定浏览器路径：
+# $env:CHROME_BINARY="C:\Program Files\Google\Chrome\Application\chrome.exe"
 ```
 
 ### 3. 运行入口
@@ -63,6 +82,8 @@ export CDP_START_URL=https://www.okx.com/web3
 3. 轨迹回放：`main_replay.py`
 4. 挂起恢复：`main_resume.py`
 5. 循环任务：`main_loop.py`
+6. 美团消费者下单辅助：`main_meituan.py`
+7. 小红书浏览辅助：`main_xiaohongshu.py`
 
 ---
 
@@ -78,6 +99,31 @@ export CDP_START_URL=https://www.okx.com/web3
    - `loop_name`
    - `iterations`
    - `max_iteration_retries`
+
+---
+
+## 美团消费者工作流
+
+新增了一个可直接运行的消费者侧工作流：
+1. 任务文件：`memory/workspace/task_specs/meituan_consumer_order_assist.json`
+2. 运行入口：`main_meituan.py`
+
+默认目标：
+1. 进入美团外卖消费者链路
+2. 进入真实商家列表
+3. 打开一个真实商家菜单页
+4. 停留在可点菜状态，不提交订单、不支付
+
+建议运行方式：
+```bash
+USE_CDP=1 CDP_PORT=9333 CDP_START_URL=https://h5.waimai.meituan.com/waimai/mindex/home MEITUAN_PREFER_EXISTING_PAGE=1 python main_meituan.py
+```
+
+说明：
+1. 该工作流默认复用真实 Chrome Profile，适合沿用已有登录态。
+2. 在 CDP 模式下，`main_meituan.py` 会优先复用已有浏览器页面；如果你已经把页面停在 `https://h5.waimai.meituan.com/waimai/mindex/home`，引擎会尽量直接从这一页接着跑。
+3. 若遇到登录、验证码、地址选择等环节，引擎会走人工接管。
+4. `加入购物车`、`去结算`、`提交订单`、`支付` 等动作已挂上风险闸门，需要人工批准。
 
 ---
 

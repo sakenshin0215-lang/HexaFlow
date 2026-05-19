@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import base64
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page, BrowserContext
 from hexaflow.browser.cdp_runtime import CDPConfig, ensure_cdp_browser
@@ -13,6 +14,7 @@ from hexaflow.agents.react_agent import NextAction
 from hexaflow.tools.popup_healer import PopupHealer
 
 import random
+import json
 
 # ==========================================
 # 0. 配置日志
@@ -96,6 +98,35 @@ class HexaEngine:
                 continue
         return ""
 
+    async def _prompt_human_choice(
+        self,
+        prompt: str,
+        timeout_seconds: int = 600,
+        default: str = "n",
+        allowed: list[str] = None,
+    ) -> str:
+        """
+        等待人工输入（可超时）。超时返回 default。
+        说明：使用线程池 input，不阻塞事件循环。
+        """
+        allowed = allowed or ["y", "n"]
+        loop = asyncio.get_running_loop()
+
+        def _blocking_input():
+            return input(prompt)
+
+        try:
+            raw = await asyncio.wait_for(
+                loop.run_in_executor(None, _blocking_input),
+                timeout=max(1, int(timeout_seconds)),
+            )
+            value = (raw or "").strip().lower()
+            if value in allowed:
+                return value
+            return default
+        except Exception:
+            return default
+
     async def _human_handoff_if_needed(self, page: Page, checkpoint: str = "", enabled: bool = True) -> bool:
         if not enabled:
             return False
@@ -114,9 +145,95 @@ class HexaEngine:
         logger.warning("完成后回终端按回车继续。")
         logger.warning(line + "\n")
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, input, "[等待人工] 完成后按回车继续... ")
+        # 标准化：允许人工选择继续/终止，并支持超时
+        choice = await self._prompt_human_choice(
+            prompt="[等待人工] 完成后按 y 继续 / n 终止 (默认 y): ",
+            timeout_seconds=1800,
+            default="y",
+            allowed=["y", "n"],
+        )
+        if choice == "n":
+            raise Exception(f"HumanHandoffAborted: {reason}")
         return True
+
+    @staticmethod
+    def _match_keyword(text: str, keywords: list[str]) -> str:
+        lower_text = (text or "").lower()
+        for k in (keywords or []):
+            kk = (k or "").strip().lower()
+            if kk and kk in lower_text:
+                return k
+        return ""
+
+    async def _check_success_criteria(self, page: Page, criteria_cfg) -> tuple[bool, str]:
+        """
+        根据 TaskSpec.success_criteria 判定任务是否完成。
+        返回 (is_done, detail_reason)
+        """
+        if not criteria_cfg or not getattr(criteria_cfg, "criteria", None):
+            return False, ""
+
+        mode = getattr(criteria_cfg, "mode", "any")
+        max_wait_ms = int(getattr(criteria_cfg, "max_wait_ms", 0) or 0)
+        end_ts = asyncio.get_running_loop().time() + max(0.0, max_wait_ms / 1000.0)
+
+        async def eval_once() -> list[tuple[bool, str]]:
+            results = []
+            for c in criteria_cfg.criteria:
+                ctype = getattr(c, "type", "")
+                value = getattr(c, "value", "") or ""
+                ci = bool(getattr(c, "case_insensitive", True))
+                if not value:
+                    results.append((False, f"{ctype}:<empty>"))
+                    continue
+
+                if ctype == "url_contains":
+                    hay = page.url or ""
+                    ok = (value.lower() in hay.lower()) if ci else (value in hay)
+                    results.append((ok, f"url_contains({value})"))
+                    continue
+
+                if ctype == "text_present":
+                    try:
+                        loc = page.get_by_text(value, exact=False).first
+                        ok = await loc.is_visible(timeout=800)
+                        results.append((bool(ok), f"text_present({value})"))
+                    except Exception:
+                        results.append((False, f"text_present({value})"))
+                    continue
+
+                if ctype == "dom_selector_present":
+                    try:
+                        loc = page.locator(value).first
+                        ok = await loc.is_visible(timeout=800)
+                        results.append((bool(ok), f"dom_selector_present({value})"))
+                    except Exception:
+                        results.append((False, f"dom_selector_present({value})"))
+                    continue
+
+                results.append((False, f"unknown({ctype})"))
+            return results
+
+        # 允许小幅等待（如页面动画/跳转尚未完成）
+        last_results = []
+        while True:
+            last_results = await eval_once()
+            oks = [ok for ok, _ in last_results]
+            if mode == "all":
+                done = all(oks) if oks else False
+            else:
+                done = any(oks) if oks else False
+            if done:
+                matched = [name for ok, name in last_results if ok]
+                return True, f"success_criteria_matched: {', '.join(matched)}"
+
+            if max_wait_ms <= 0:
+                break
+            if asyncio.get_running_loop().time() >= end_ts:
+                break
+            await page.wait_for_timeout(250)
+
+        return False, ""
 
     async def _save_browser_state(self, context: BrowserContext):
         if self.state_path:
@@ -146,6 +263,40 @@ class HexaEngine:
 
         return await self.browser.new_context(**(context_options or {}))
 
+    async def _resolve_page(
+        self,
+        context: BrowserContext,
+        start_url: str = "about:blank",
+        prefer_existing_page: bool = False,
+    ):
+        """
+        统一获取可用 page。
+        - 默认保持旧行为：创建新页
+        - CDP + prefer_existing_page=True 时优先复用已有页面
+        - 优先选择已在 start_url 上的页面；否则选择第一个非 about:blank 页面
+        """
+        if prefer_existing_page and context and getattr(context, "pages", None):
+            normalized_start = (start_url or "").strip()
+
+            for existing_page in context.pages:
+                try:
+                    if normalized_start and normalized_start != "about:blank" and existing_page.url == normalized_start:
+                        logger.info(f"♻️ 复用已有页面(精确命中 start_url): {existing_page.url}")
+                        return existing_page
+                except Exception:
+                    continue
+
+            for existing_page in context.pages:
+                try:
+                    page_url = (existing_page.url or "").strip()
+                    if page_url and page_url != "about:blank":
+                        logger.info(f"♻️ 复用已有页面(首个非 about:blank 页面): {page_url}")
+                        return existing_page
+                except Exception:
+                    continue
+
+        return await context.new_page()
+
     async def _capture_suspend_snapshot(self, page: Page, run_id: str, step_id: str) -> str:
         from datetime import datetime
         screenshot_dir = "memory/workspace/screenshots"
@@ -158,6 +309,51 @@ class HexaEngine:
             return screenshot_path
         except Exception:
             return ""
+
+    async def _capture_viewport_screenshot_base64(
+        self,
+        page: Page,
+        image_type: str = "jpeg",
+        quality: int = 60,
+    ) -> str:
+        """
+        捕获当前可视窗口截图（非 full_page），用于多模态模型输入，控制体积。
+        """
+        try:
+            screenshot_kwargs = {
+                "full_page": False,
+                "type": image_type,
+                "animations": "disabled",
+            }
+            if image_type == "jpeg":
+                screenshot_kwargs["quality"] = quality
+            screenshot_bytes = await page.screenshot(
+                **screenshot_kwargs
+            )
+            return base64.b64encode(screenshot_bytes).decode("ascii")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _resolve_visual_click_point(action, viewport: dict) -> tuple[float, float]:
+        """
+        从 AI 动作中解析视觉坐标点，并裁剪到当前 viewport 内。
+        """
+        x = getattr(action, "click_x", None)
+        y = getattr(action, "click_y", None)
+        if x is None or y is None:
+            raise Exception("VisualClickError: click/type 动作缺少 click_x 或 click_y")
+
+        width = int((viewport or {}).get("width") or 1280)
+        height = int((viewport or {}).get("height") or 800)
+        max_x = max(1, width - 1)
+        max_y = max(1, height - 1)
+
+        x = float(x)
+        y = float(y)
+        x = min(max(0.0, x), float(max_x))
+        y = min(max(0.0, y), float(max_y))
+        return x, y
 
     @staticmethod
     def _normalize_url_candidate(raw_value: str):
@@ -338,7 +534,16 @@ class HexaEngine:
         notes_text = "\n".join([f"- {item}" for item in spec.notes])
         return f"{spec.goal}\n\n执行注意事项:\n{notes_text}"
 
-    async def run_task_from_spec(self, spec_input, agent, context: BrowserContext = None):
+    async def run_task_from_spec(
+        self,
+        spec_input,
+        agent,
+        context: BrowserContext = None,
+        replay_repair_agent=None,
+        disable_fallback_recovery: bool = False,
+        ai_decision_use_vision: bool = True,
+        prefer_existing_page: bool = False,
+    ):
         if isinstance(spec_input, TaskSpec):
             spec = spec_input
         elif isinstance(spec_input, str):
@@ -349,6 +554,10 @@ class HexaEngine:
             raise ValueError("Unsupported task spec input type")
 
         logger.info(f"📘 载入任务DSL: {spec.task_name}")
+        if replay_repair_agent is not None:
+            logger.warning("⚠️ run_task_from_spec 当前是动态执行模式，replay_repair_agent 参数暂未使用。")
+        if disable_fallback_recovery:
+            logger.warning("⚠️ disable_fallback_recovery 在动态执行模式下暂未启用。")
         return await self.run_dynamic_task(
             goal=self._build_goal_with_notes(spec),
             agent=agent,
@@ -360,6 +569,10 @@ class HexaEngine:
             blocked_keywords=spec.blocked_keywords,
             max_consecutive_failures=spec.failure_policy.max_consecutive_failures,
             failure_mode=spec.failure_policy.mode,
+            ai_decision_use_vision=ai_decision_use_vision,
+            risky_actions_policy=spec.risky_actions_policy,
+            success_criteria=spec.success_criteria,
+            prefer_existing_page=prefer_existing_page,
         )
 
     async def run_dynamic_task(
@@ -375,6 +588,10 @@ class HexaEngine:
         max_consecutive_failures: int = 999999,
         failure_mode: str = "continue",
         human_handoff_on_auth: bool = True,
+        ai_decision_use_vision: bool = True,
+        risky_actions_policy=None,
+        success_criteria=None,
+        prefer_existing_page: bool = False,
     ):
         from datetime import datetime
         logger.info(f"▶️ 开始执行动态自适应任务: {goal} (manual_review={manual_review})")
@@ -386,6 +603,16 @@ class HexaEngine:
         
         healer = PopupHealer()
 
+        # 动态模式也创建 run_id，写入证据链与最终报告
+        run_state = self.state_machine.start_or_resume(
+            trace_path=f"dynamic:{task_name}",
+            task_name=f"{task_name}::dynamic",
+            total_steps=max_steps,
+            resume=False,
+        )
+        run_id = run_state.run_id
+        self.state_machine.add_event(run_id, "dynamic_run_started", detail=f"start_url={start_url}")
+
         if not context:
             context_options = {'viewport': {'width': 1280, 'height': 800}}
             # 非CDP模式下才注入 storage_state；CDP复用真实profile上下文
@@ -394,8 +621,13 @@ class HexaEngine:
                 context_options['storage_state'] = self.state_path
             context = await self._resolve_context(context=context, context_options=context_options)
 
-        page = await context.new_page()
-        await page.goto(start_url)
+        page = await self._resolve_page(
+            context=context,
+            start_url=start_url,
+            prefer_existing_page=prefer_existing_page,
+        )
+        if start_url != "about:blank" and (page.url or "") != start_url:
+            await page.goto(start_url)
         await self._human_handoff_if_needed(
             page, checkpoint="动态任务启动检查", enabled=human_handoff_on_auth
         )
@@ -419,9 +651,58 @@ class HexaEngine:
             current_url = page.url
             await page.wait_for_timeout(1000) 
             dom_snapshot = await DomParser.get_interactive_elements(page)
+
+            # 先自动判定完成（避免多余模型调用）
+            if success_criteria and getattr(success_criteria, "check_every_step", True):
+                done, reason = await self._check_success_criteria(page, success_criteria)
+                if done:
+                    logger.info("✅ 已满足完成条件，自动结束动态任务。")
+                    self.state_machine.add_event(run_id, "dynamic_done_by_criteria", detail=reason, step_index=step_count - 1)
+                    recorder.save_to_disk()
+                    trace_saved = True
+                    await self._save_browser_state(context)
+                    self.state_machine.mark_run_completed(run_id)
+                    self._save_run_report(run_id)
+                    break
             
             history_str = "\n".join(action_history)
-            next_action = await agent.decide_next_action(goal, history_str, current_url, dom_snapshot)
+            viewport = page.viewport_size or {"width": 1280, "height": 800}
+            screenshot_base64 = (
+                await self._capture_viewport_screenshot_base64(page)
+                if ai_decision_use_vision
+                else ""
+            )
+            next_action = await agent.decide_next_action(
+                goal,
+                history_str,
+                current_url,
+                dom_snapshot,
+                screenshot_base64=screenshot_base64,
+                screenshot_mime="image/jpeg",
+                viewport_width=viewport.get("width"),
+                viewport_height=viewport.get("height"),
+            )
+
+            step_id = f"dyn_step_{step_count}"
+            self.state_machine.mark_step_started(run_id, step_count - 1, step_id)
+            self.state_machine.add_event(
+                run_id,
+                "dynamic_agent_decision",
+                detail=json.dumps(
+                    {
+                        "action_type": next_action.action_type,
+                        "target": next_action.target,
+                        "input_value": next_action.input_value,
+                        "click_x": next_action.click_x,
+                        "click_y": next_action.click_y,
+                        "thought": (next_action.thought or "")[:800],
+                        "url": current_url,
+                    },
+                    ensure_ascii=False,
+                ),
+                step_index=step_count - 1,
+                step_id=step_id,
+            )
             
             stable_target = next_action.target
             current_action_log = f"Skipped unknown action: {next_action.action_type}"
@@ -432,6 +713,8 @@ class HexaEngine:
                 recorder.save_to_disk()
                 trace_saved = True
                 await self._save_browser_state(context)
+                self.state_machine.mark_run_completed(run_id)
+                self._save_run_report(run_id)
                 break
             else:
                 action_raw_text = f"{next_action.action_type} {next_action.target or ''} {next_action.thought or ''}"
@@ -440,6 +723,81 @@ class HexaEngine:
                     logger.warning(f"🛡️ 动作已拦截: {current_action_log}")
                     action_success = False
                 else:
+                    # 风险动作闸门：命中关键词时阻断或要求人工确认
+                    if risky_actions_policy and getattr(risky_actions_policy, "enabled", False):
+                        matched = self._match_keyword(action_raw_text, getattr(risky_actions_policy, "keywords", []))
+                        if matched:
+                            # 允许域名/URL 白名单进一步约束
+                            allow_domains = getattr(risky_actions_policy, "allowed_domains", []) or []
+                            allow_url_contains = getattr(risky_actions_policy, "allowed_url_contains", []) or []
+                            domain_ok = self._is_domain_allowed(page.url or "", allow_domains) if allow_domains else True
+                            url_ok = any(s in (page.url or "") for s in allow_url_contains) if allow_url_contains else True
+
+                            gate_detail = f"matched_keyword={matched} domain_ok={domain_ok} url_ok={url_ok} current_url={page.url}"
+                            self.state_machine.add_event(
+                                run_id,
+                                "risky_action_detected",
+                                detail=gate_detail,
+                                step_index=step_count - 1,
+                                step_id=step_id,
+                            )
+
+                            if not (domain_ok and url_ok):
+                                logger.error("🛑 风险动作不在白名单范围内，已阻断并挂起。")
+                                self.state_machine.mark_run_suspended(
+                                    run_id,
+                                    step_count - 1,
+                                    step_id,
+                                    f"RiskyActionBlocked: {gate_detail}",
+                                )
+                                self._save_run_report(run_id)
+                                raise Exception(f"RiskyActionBlocked: {gate_detail}")
+
+                            mode = getattr(risky_actions_policy, "mode", "require_confirm")
+                            if mode == "block":
+                                logger.error("🛑 风险动作策略=block，已挂起等待人工处理。")
+                                self.state_machine.mark_run_suspended(
+                                    run_id,
+                                    step_count - 1,
+                                    step_id,
+                                    f"RiskyActionBlocked(mode=block): {gate_detail}",
+                                )
+                                self._save_run_report(run_id)
+                                raise Exception(f"RiskyActionBlocked(mode=block): {gate_detail}")
+
+                            # require_confirm
+                            logger.warning("⚠️ 检测到风险动作，等待人工确认(y/n)。")
+                            choice = await self._prompt_human_choice(
+                                prompt=(
+                                    f"\n[风险动作确认] step={step_id}\n"
+                                    f"- url: {page.url}\n"
+                                    f"- action: {next_action.action_type}\n"
+                                    f"- target: {next_action.target}\n"
+                                    f"- matched: {matched}\n"
+                                    "是否允许继续执行？(y/n): "
+                                ),
+                                timeout_seconds=getattr(risky_actions_policy, "max_confirm_wait_seconds", 600),
+                                default="n",
+                                allowed=["y", "n"],
+                            )
+                            self.state_machine.add_event(
+                                run_id,
+                                "risky_action_human_confirm",
+                                detail=f"choice={choice} {gate_detail}",
+                                step_index=step_count - 1,
+                                step_id=step_id,
+                            )
+                            if choice != "y":
+                                logger.error("🛑 人工未批准风险动作，已挂起。")
+                                self.state_machine.mark_run_suspended(
+                                    run_id,
+                                    step_count - 1,
+                                    step_id,
+                                    f"RiskyActionDenied: {gate_detail}",
+                                )
+                                self._save_run_report(run_id)
+                                raise Exception(f"RiskyActionDenied: {gate_detail}")
+
                     logger.info(f"⚡ 自动执行: [{next_action.action_type}] 目标: {next_action.target}")
                     
                     max_attempts = 4
@@ -454,15 +812,19 @@ class HexaEngine:
                                 await page.goto(stable_target) 
                                 
                             elif next_action.action_type == "click":
-                                locator = page.locator(stable_target).first
-                                await locator.hover(timeout=5000)
-                                await page.wait_for_timeout(300)
-                                await locator.click(timeout=5000)
+                                click_x, click_y = self._resolve_visual_click_point(
+                                    next_action, viewport
+                                )
+                                stable_target = f"coord:{int(click_x)},{int(click_y)}"
+                                await page.mouse.click(click_x, click_y)
                                 
                             elif next_action.action_type == "type":
-                                locator = page.locator(stable_target).first
-                                await locator.hover(timeout=5000)
-                                await locator.press_sequentially(next_action.input_value, delay=100, timeout=5000)
+                                click_x, click_y = self._resolve_visual_click_point(
+                                    next_action, viewport
+                                )
+                                stable_target = f"coord:{int(click_x)},{int(click_y)}"
+                                await page.mouse.click(click_x, click_y)
+                                await page.keyboard.type(next_action.input_value or "", delay=80)
                                 
                             await page.wait_for_timeout(1500) 
                             current_action_log = f"Executed {next_action.action_type} on {stable_target}"
@@ -497,12 +859,42 @@ class HexaEngine:
 
             if action_success:
                 consecutive_failures = 0
+                self.state_machine.mark_step_success(run_id, step_count - 1, step_id)
+                self.state_machine.add_event(
+                    run_id,
+                    "dynamic_step_success",
+                    detail=current_action_log,
+                    step_index=step_count - 1,
+                    step_id=step_id,
+                )
             else:
                 consecutive_failures += 1
+                self.state_machine.add_event(
+                    run_id,
+                    "dynamic_step_failed",
+                    detail=current_action_log,
+                    step_index=step_count - 1,
+                    step_id=step_id,
+                )
+
+            # 动作后也检查完成条件（避免模型误判/漏判）
+            if action_success and success_criteria and getattr(success_criteria, "check_every_step", True):
+                done, reason = await self._check_success_criteria(page, success_criteria)
+                if done:
+                    logger.info("✅ 动作后已满足完成条件，自动结束动态任务。")
+                    self.state_machine.add_event(run_id, "dynamic_done_by_criteria", detail=reason, step_index=step_count - 1, step_id=step_id)
+                    recorder.save_to_disk()
+                    trace_saved = True
+                    await self._save_browser_state(context)
+                    self.state_machine.mark_run_completed(run_id)
+                    self._save_run_report(run_id)
+                    break
 
             if not manual_review:
                 if action_success:
-                    fp_dict = await DomParser.get_element_fingerprint(page, stable_target)
+                    fp_dict = {}
+                    if not str(stable_target).startswith("coord:"):
+                        fp_dict = await DomParser.get_element_fingerprint(page, stable_target)
                     action_history.append(current_action_log + " -> [SUCCESS] - Action completed. DO NOT repeat this target. Move to the next step.")
                     recorder.record_step(
                         current_url,
@@ -520,6 +912,13 @@ class HexaEngine:
                             f"🛑 连续失败达到阈值 ({consecutive_failures}/{max_consecutive_failures})，failure_mode={failure_mode}"
                         )
                         if failure_mode == "stop":
+                            self.state_machine.mark_run_failed(
+                                run_id,
+                                step_count - 1,
+                                step_id,
+                                f"DynamicFailureThresholdReached: {current_action_log}",
+                            )
+                            self._save_run_report(run_id)
                             break
                 continue
 
@@ -534,7 +933,9 @@ class HexaEngine:
             if user_input in ['done', 'd', 'quit']:
                 logger.info("🛑 任务结束，正在保存轨迹...")
                 if action_success:
-                    fp_dict = await DomParser.get_element_fingerprint(page, stable_target)
+                    fp_dict = {}
+                    if not str(stable_target).startswith("coord:"):
+                        fp_dict = await DomParser.get_element_fingerprint(page, stable_target)
                     recorder.record_step(
                         current_url,
                         next_action.action_type,
@@ -546,6 +947,8 @@ class HexaEngine:
                 recorder.save_to_disk()
                 trace_saved = True
                 await self._save_browser_state(context)
+                self.state_machine.mark_run_completed(run_id)
+                self._save_run_report(run_id)
                 break
             
             if user_input == 'o':
@@ -587,12 +990,28 @@ class HexaEngine:
                     logger.error(
                         f"🛑 连续失败达到阈值 ({consecutive_failures}/{max_consecutive_failures})，手动模式下停止任务。"
                     )
+                    self.state_machine.mark_run_failed(
+                        run_id,
+                        step_count - 1,
+                        step_id,
+                        f"DynamicFailureThresholdReached(manual): {current_action_log}",
+                    )
+                    self._save_run_report(run_id)
                     break
 
         if not trace_saved:
             logger.info("💾 达到步数上限或流程自然结束，自动保存当前轨迹。")
             recorder.save_to_disk()
             await self._save_browser_state(context)
+            # 达到上限视作失败（可据 future policy 调整）
+            if self.state_machine.get_by_run_id(run_id).status == "running":
+                self.state_machine.mark_run_failed(
+                    run_id,
+                    step_count - 1 if step_count > 0 else 0,
+                    f"dyn_step_{step_count}" if step_count > 0 else "dyn_step_0",
+                    "DynamicMaxStepsReached",
+                )
+                self._save_run_report(run_id)
 
         await page.close()
 
@@ -1007,6 +1426,7 @@ class HexaEngine:
                             if attempt == 3 and replay_repair_agent:
                                 logger.info("🧠 [回放阶段] 唤醒 AI 修复器分析最近步骤并生成修复动作...")
                                 dom_snapshot = await DomParser.get_interactive_elements(page)
+                                screenshot_base64 = await self._capture_viewport_screenshot_base64(page)
                                 recent_steps = self._build_recent_steps_text(
                                     blueprint=blueprint,
                                     current_index=step_index,
@@ -1021,6 +1441,8 @@ class HexaEngine:
                                     failed_action_type=step.action.action_type,
                                     failed_target=step.action.target,
                                     last_error=str(e),
+                                    screenshot_base64=screenshot_base64,
+                                    screenshot_mime="image/jpeg",
                                 )
 
                                 self.state_machine.add_event(
@@ -1193,6 +1615,7 @@ class HexaEngine:
                     if attempt == 2 and replay_repair_agent:
                         try:
                             dom_snapshot = await DomParser.get_interactive_elements(page)
+                            screenshot_base64 = await self._capture_viewport_screenshot_base64(page)
                             decision = await replay_repair_agent.repair_failed_replay_step(
                                 task_name=task_name,
                                 recent_steps=recent_steps_text or "No previous steps.",
@@ -1202,6 +1625,8 @@ class HexaEngine:
                                 failed_action_type=step.action.action_type,
                                 failed_target=step.action.target,
                                 last_error=str(e),
+                                screenshot_base64=screenshot_base64,
+                                screenshot_mime="image/jpeg",
                             )
                             if decision.strategy == "skip_step":
                                 return True
@@ -1604,7 +2029,13 @@ class HexaEngine:
                 logger.info(f"\n⚡ 检测到你的点击: <{fp.get('tag_name')}> '{fp.get('text')}'")
             
             # AI 意图分析
-            analysis = await agent.analyze_manual_action(goal, action_data)
+            screenshot_base64 = await self._capture_viewport_screenshot_base64(page)
+            analysis = await agent.analyze_manual_action(
+                goal,
+                action_data,
+                screenshot_base64=screenshot_base64,
+                screenshot_mime="image/jpeg",
+            )
             logger.info(f"💡 AI 意图理解: {analysis.thought}")
             logger.info(f"📝 拟录制描述: {analysis.description}")
             
